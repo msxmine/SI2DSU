@@ -1,0 +1,74 @@
+"In Game Actions"
+{
+	"actions"
+	{
+		"DSUControls"
+		{
+			"title"					"#Set_Main"
+			"StickPadGyro"
+			{
+				"LeftJoystick"
+				{
+					"title"			"#Action_LJoy"
+					"input_mode"	"joystick_move"
+				}
+				"RightJoystick"
+				{
+					"title"			"#Action_RJoy"
+					"input_mode"	"joystick_move"
+				}
+			}
+			"AnalogTrigger"
+			{
+				"LeftTrigger"		"#Action_LTrigger"
+				"RightTrigger"		"#Action_RTrigger"
+			}
+			"Button"
+			{
+				"DpadLeft"			"#Action_DPL"
+				"DpadRight"			"#Action_DPR"
+				"DpadUp"			"#Action_DPU"
+				"DpadDown"			"#Action_DPD"
+				"Select"			"#Action_Select"
+				"Start"				"#Action_Start"
+				"LJoystickPress"	"#Action_LJoyPress"
+				"RJoystickPress"	"#Action_RJoyPress"
+				"A"					"#Action_A"
+				"B"					"#Action_B"
+				"X"					"#Action_X"
+				"Y"					"#Action_Y"
+				"L1"				"#Action_L1"
+				"R1"				"#Action_R1"
+				"Home"				"#Action_Home"
+				"Touch"				"#Action_Touch"
+			}
+		}
+	}
+	"localization"
+	{
+		"english"
+		{
+			"Set_Main"			"DSU Emulation"
+			"Action_LJoy"		"Left Joystick"
+			"Action_RJoy"		"Right Joystick"
+			"Action_LTrigger"	"Left Trigger"
+			"Action_RTrigger"	"Right Trigger"
+			"Action_DPL"		"D-Pad Left"
+			"Action_DPR"		"D-Pad Right"
+			"Action_DPU"		"D-Pad Up"
+			"Action_DPD"		"D-Pad Down"
+			"Action_Select"		"Select"
+			"Action_Start"		"Start"
+			"Action_LJoyPress"	"Left Joystick Press"
+			"Action_RJoyPress"	"Right Joystick Press"
+			"Action_A"			"A"
+			"Action_B"			"B"
+			"Action_X"			"X"
+			"Action_Y"			"Y"
+			"Action_L1"			"Left Button"
+			"Action_R1"			"Right Button"
+			"Action_Home"		"Home"
+			"Action_Touch"		"Touch"
+		}
+	}
+}
