@@ -8,7 +8,7 @@ Because it uses SteamInput, it also works over Steam Link/RemotePlay/In-Home-Str
 Currently it is Windows-only as it relies on Winsock and the CreateProcess Win32 API, which would have to be replaced with normal sockets and fork()/execve()
 
 # Download
-[Latest version](https://github.com/msxmine/SI2DSU/releases/download/0.1/release.zip)
+[Latest version](https://github.com/msxmine/SI2DSU/releases/download/0.2/release.zip)
 
 # Installation
 
