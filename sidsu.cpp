@@ -464,13 +464,13 @@ int main(int argc, char* argv[]){
             *(float *)(response+92) = -(float)(SteamInput()->GetMotionData(controllers[0]).rotVelZ) / 32.0;
             *(float *)(response+96) = -(float)(SteamInput()->GetMotionData(controllers[0]).rotVelY) / 32.0;
         }
-        else if (controllerType == k_ESteamInputType_SwitchJoyConSingle || controllerType == k_ESteamInputType_SwitchJoyConPair || controllerType == k_ESteamInputType_SwitchProController){ //PLACEHOLDER
-            *(float *)(response+76) = (float)(SteamInput()->GetMotionData(controllers[0]).posAccelX);
-            *(float *)(response+80) = (float)(SteamInput()->GetMotionData(controllers[0]).posAccelY);
-            *(float *)(response+84) = (float)(SteamInput()->GetMotionData(controllers[0]).posAccelZ);
-            *(float *)(response+88) = (float)(SteamInput()->GetMotionData(controllers[0]).rotVelX);
-            *(float *)(response+92) = (float)(SteamInput()->GetMotionData(controllers[0]).rotVelY);
-            *(float *)(response+96) = (float)(SteamInput()->GetMotionData(controllers[0]).rotVelZ);
+        else if (controllerType == k_ESteamInputType_SwitchJoyConSingle || controllerType == k_ESteamInputType_SwitchJoyConPair || controllerType == k_ESteamInputType_SwitchProController){
+            *(float *)(response+76) = -(float)(SteamInput()->GetMotionData(controllers[0]).posAccelX) / 16384.0;
+            *(float *)(response+80) = -(float)(SteamInput()->GetMotionData(controllers[0]).posAccelY) / 16384.0;
+            *(float *)(response+84) = -(float)(SteamInput()->GetMotionData(controllers[0]).posAccelZ) / 16384.0;
+            *(float *)(response+88) = (float)(SteamInput()->GetMotionData(controllers[0]).rotVelX) / 32.0;
+            *(float *)(response+92) = -(float)(SteamInput()->GetMotionData(controllers[0]).rotVelZ) / 32.0;
+            *(float *)(response+96) = -(float)(SteamInput()->GetMotionData(controllers[0]).rotVelY) / 32.0;
         }
         else if (controllerType == k_ESteamInputType_AndroidController || controllerType == k_ESteamInputType_AppleMFiController || controllerType == k_ESteamInputType_MobileTouch){ //PLACEHOLDER
             *(float *)(response+76) = (float)(SteamInput()->GetMotionData(controllers[0]).posAccelX);
