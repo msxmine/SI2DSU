@@ -171,10 +171,18 @@ int wmain(int argc, wchar_t* argv[]){
     wchar_t CEMUEXESTR[MAX_PATH*10];
     wchar_t CEMUFOLDER[MAX_PATH*10];
 
+    int firstclientargidx = 1;
+    if (fileargs.size() >= 3){
+        if (fileargs[1] == L"-dsuclientexe"){
+            cemuexec = fileargs[2];
+            firstclientargidx = 3;
+        }
+    }
+
     std::wstring cemucommand = cemuexec;
     std::wstring cemudir = cemucommand;
     cemucommand = L"\"" + cemucommand + L"\"";
-    for (int i = 1; i < fileargs.size(); i++){
+    for (int i = firstclientargidx; i < fileargs.size(); i++){
         cemucommand.append(L" ");
         cemucommand.append(L"\"" + fileargs[i] + L"\"" );
     }
@@ -185,7 +193,10 @@ int wmain(int argc, wchar_t* argv[]){
 
     std::cerr << "Starting target emulator\n";
 
-    CreateProcessW(NULL, CEMUEXESTR, NULL, NULL, FALSE, 0, NULL, CEMUFOLDER, &cemustartinfo, &cemuprocessinfo);
+    if (CreateProcessW(NULL, CEMUEXESTR, NULL, NULL, FALSE, 0, NULL, CEMUFOLDER, &cemustartinfo, &cemuprocessinfo) == 0){
+        std::cerr << "Failed to launch client\n";
+        return 1;
+    }
     
     std::cerr << "Starting SteamInput\n";
 
@@ -204,9 +215,9 @@ int wmain(int argc, wchar_t* argv[]){
     std::vector<subscription> subs;
 
     std::vector<std::string> digitalActions = {"DpadLeft", "DpadDown", "DpadRight", "DpadUp", "Start", "RJoystickPress", "LJoystickPress", "Select",
-                                "X", "A", "B", "Y", "R1", "L1", "Home", "Touch"};
+                                "X", "A", "B", "Y", "R1", "L1", "Home", "Touch", "TPActive"};
 
-    std::vector<std::string> analogActions = {"LeftJoystick", "RightJoystick", "LeftTrigger", "RightTrigger"};
+    std::vector<std::string> analogActions = {"LeftJoystick", "RightJoystick", "LeftTrigger", "RightTrigger", "TPPosition"};
 
     std::map<std::string, InputDigitalActionHandle_t> digitalhandles;
     std::map<std::string, InputAnalogActionHandle_t> analoghandles;
@@ -223,6 +234,11 @@ int wmain(int argc, wchar_t* argv[]){
     std::byte UDPrecv[2000];
 
     uint32_t reports = 0;
+
+    uint8_t touchpad_id = 0;
+    bool last_touchpad_state = false;
+    uint16_t touchpad_x_adj = 0;
+    uint16_t touchpad_y_adj = 0;
 
     DWORD procstat = STILL_ACTIVE;
     while(procstat == STILL_ACTIVE){
@@ -376,7 +392,7 @@ int wmain(int argc, wchar_t* argv[]){
 
         InputHandle_t controllers[STEAM_INPUT_MAX_COUNT];
         if (SteamInput()->GetConnectedControllers(controllers) == 0){
-            //continue;
+            continue;
         }
 
         ESteamInputType controllerType = SteamInput()->GetInputTypeForHandle(controllers[0]);
@@ -455,7 +471,26 @@ int wmain(int argc, wchar_t* argv[]){
         *(uint8_t *)(response+54) = min(max((SteamInput()->GetAnalogActionData(controllers[0], analoghandles["RightTrigger"]).x * 255.0),0),255);
         *(uint8_t *)(response+55) = min(max((SteamInput()->GetAnalogActionData(controllers[0], analoghandles["LeftTrigger"]).x * 255.0),0),255);
 
-        memset(response+56, 0, 12);
+        bool touchpad_active = SteamInput()->GetDigitalActionData(controllers[0], digitalhandles["TPActive"]).bState;
+        float touchpad_x = SteamInput()->GetAnalogActionData(controllers[0], analoghandles["TPPosition"]).x;
+        float touchpad_y = SteamInput()->GetAnalogActionData(controllers[0], analoghandles["TPPosition"]).y;
+
+        if (touchpad_active){
+            if (last_touchpad_state == false){
+                touchpad_id++;
+            }
+            touchpad_x_adj = min(max((960 + (touchpad_x * 960)),0),1919);
+            touchpad_y_adj = min(max((471 + (touchpad_y * 471)),0),942);
+        }
+        *(uint8_t *)(response+56) = (touchpad_active ? 1 : 0);
+        *(uint8_t *)(response+57) = touchpad_id;
+        *(uint16_t*)(response+58) = touchpad_x_adj;
+        *(uint16_t*)(response+60) = touchpad_y_adj;
+
+
+        last_touchpad_state = touchpad_active;
+
+        memset(response+62, 0, 6);
 
         *(uint64_t *)(response+68) = datacapture;
 
@@ -527,6 +562,8 @@ int wmain(int argc, wchar_t* argv[]){
 
     SteamInput()->Shutdown();
     SteamAPI_Shutdown();
+
+    std::cerr << "Exiting\n";
     
 }
 

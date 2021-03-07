@@ -17,6 +17,11 @@
 					"title"			"#Action_RJoy"
 					"input_mode"	"joystick_move"
 				}
+				"TPPosition"
+				{
+					"title"			"#Action_TPPosition"
+					"input_mode"	"joystick_move"
+				}
 			}
 			"AnalogTrigger"
 			{
@@ -41,6 +46,7 @@
 				"R1"				"#Action_R1"
 				"Home"				"#Action_Home"
 				"Touch"				"#Action_Touch"
+				"TPActive"			"#Action_TPActive"
 			}
 		}
 	}
@@ -68,7 +74,9 @@
 			"Action_L1"			"Left Button"
 			"Action_R1"			"Right Button"
 			"Action_Home"		"Home"
-			"Action_Touch"		"Touch"
+			"Action_Touch"		"TouchPad Press"
+			"Action_TPActive"	"TouchPad Touch"
+			"Action_TPPosition"	"TouchPad XY Input"
 		}
 	}
 }
