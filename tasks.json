@@ -18,7 +18,7 @@
 				"ws2_32.lib",
 				"/link",
 				"/subsystem:windows",
-				"/entry:mainCRTStartup"
+				"/entry:wmainCRTStartup"
 			],
 			"options": {
 				"cwd": "${workspaceFolder}"
