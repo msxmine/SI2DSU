@@ -391,9 +391,14 @@ int wmain(int argc, wchar_t* argv[]){
         }
 
         InputHandle_t controllers[STEAM_INPUT_MAX_COUNT];
-        if (SteamInput()->GetConnectedControllers(controllers) == 0){
+        for (int chandidx = 0; chandidx < STEAM_INPUT_MAX_COUNT; chandidx++){
+            controllers[chandidx] = 0;
+        }
+        SteamInput()->GetConnectedControllers(controllers);
+        if (controllers[0] == 0){
             continue;
         }
+        
 
         ESteamInputType controllerType = SteamInput()->GetInputTypeForHandle(controllers[0]);
 
