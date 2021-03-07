@@ -391,13 +391,13 @@ int wmain(int argc, wchar_t* argv[]){
         }
 
         InputHandle_t controllers[STEAM_INPUT_MAX_COUNT];
-        for (int chandidx = 0; chandidx < STEAM_INPUT_MAX_COUNT; chandidx++){
-            controllers[chandidx] = 0;
-        }
+        //for (int chandidx = 0; chandidx < STEAM_INPUT_MAX_COUNT; chandidx++){
+        //    controllers[chandidx] = 0;
+        //}
         SteamInput()->GetConnectedControllers(controllers);
-        if (controllers[0] == 0){
-            continue;
-        }
+        //if (controllers[0] == 0){
+        //    continue;
+        //}
         
 
         ESteamInputType controllerType = SteamInput()->GetInputTypeForHandle(controllers[0]);
@@ -480,6 +480,7 @@ int wmain(int argc, wchar_t* argv[]){
         float touchpad_x = SteamInput()->GetAnalogActionData(controllers[0], analoghandles["TPPosition"]).x;
         float touchpad_y = SteamInput()->GetAnalogActionData(controllers[0], analoghandles["TPPosition"]).y;
 
+
         if (touchpad_active){
             if (last_touchpad_state == false){
                 touchpad_id++;
@@ -491,6 +492,8 @@ int wmain(int argc, wchar_t* argv[]){
         *(uint8_t *)(response+57) = touchpad_id;
         *(uint16_t*)(response+58) = touchpad_x_adj;
         *(uint16_t*)(response+60) = touchpad_y_adj;
+
+        //std::cerr << "TP last " << (last_touchpad_state ? "true" :  "false") << " TP now " << (touchpad_active ? "true" :  "false") << " TouchID " << touchpad_id << " Xreal " << touchpad_x << " Yreal " << touchpad_y << " Xdsu " << touchpad_x_adj << " Ydsu " << touchpad_y_adj << "\n";
 
 
         last_touchpad_state = touchpad_active;
