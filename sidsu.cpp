@@ -11,8 +11,9 @@
 #include <locale>
 #include <codecvt>
 #include <map>
+#include <filesystem>
 
-uint32_t crc32(std::byte message[], unsigned long long msglen){
+uint32_t crc32(const std::byte message[], unsigned long long msglen){
     uint32_t crc = 0xFFFFFFFF;
 
     for (unsigned long long i = 0; i < msglen; i++){
@@ -33,24 +34,28 @@ struct subscription{
 };
 
 
-int main(int argc, char* argv[]){
+int wmain(int argc, wchar_t* argv[]){
+
+    std::filesystem::path paramspath = (std::filesystem::temp_directory_path() /= std::string("dsuparams.txt"));
+    std::cerr << "Path to parameter file " << paramspath << std::endl;
 
     if (argc > 1){
-        if ( strcmp(argv[1], "-dsumode") == 0 ){
-            remove("dsuparams.txt");
-            std::ofstream paramstore;
-            paramstore.open("dsuparams.txt");
+        if ( wcscmp(argv[1], L"-dsumode") == 0 ){
+            std::cerr << "Launched with " << argc-1 << " arguments" << std::endl;
+
+            std::filesystem::remove(paramspath);
+            std::wofstream paramstore(paramspath);
+            paramstore.imbue(std::locale(paramstore.getloc(), new std::codecvt_utf8_utf16<wchar_t, 0x10FFFF, std::generate_header>));
+
             for (int i = 1; i < argc; i++){
-                paramstore << argv[i] << "\n";
+                paramstore << argv[i] << L'\n';
             }
             paramstore.close();
 
-            WCHAR selfExeName[MAX_PATH*10];
-            WCHAR selfDirName[MAX_PATH*10];
+            wchar_t selfExeName[MAX_PATH*10];
             GetModuleFileNameW(NULL, selfExeName, MAX_PATH*10);
-            GetCurrentDirectoryW(MAX_PATH*10, selfDirName);
 
-            WCHAR quotedfile[MAX_PATH*10];
+            wchar_t quotedfile[MAX_PATH*10];
             wcscpy(quotedfile, L"\"");
             wcscat(quotedfile, selfExeName);
             wcscat(quotedfile, L"\"");
@@ -61,59 +66,65 @@ int main(int argc, char* argv[]){
             taskinfo.cb = sizeof(taskinfo);
             ZeroMemory(&newprocinfo, sizeof(newprocinfo));
             
-            CreateProcessW(NULL, quotedfile, NULL, NULL, FALSE, 0, NULL, selfDirName, &taskinfo, &newprocinfo);
+            CreateProcessW(NULL, quotedfile, NULL, NULL, FALSE, 0, NULL, NULL, &taskinfo, &newprocinfo);
             return 1;
 
         }
     }
 
     
-    std::ifstream settingsfile;
-    settingsfile.open("dsusettings.txt");
-    std::string cemuexec = "";
+    std::wifstream settingsfile("dsusettings.txt");
+    settingsfile.imbue(std::locale(settingsfile.getloc(), new std::codecvt_utf8_utf16<wchar_t, 0x10FFFF, std::consume_header>));
+
+    std::wstring cemuexec = L"";
+    std::wstring idtext = L"";
     int fakeappid = 480;
+    std::cerr << "Trying to load settings \n";
     if (settingsfile.good()){
-        settingsfile >> cemuexec;
-        settingsfile >> fakeappid;
+        std::getline(settingsfile, cemuexec);
+        std::getline(settingsfile, idtext);
+        fakeappid = std::stoi(idtext);
     }
     settingsfile.close();
 
     if ( SteamAPI_RestartAppIfNecessary(fakeappid) ){
         return 1;
     }
+    std::cerr << "Steam API restart not necessary\n";
 
-    std::vector<std::string> fileargs;
+    std::vector<std::wstring> fileargs;
 
-    std::ifstream paramfile;
-    paramfile.open("dsuparams.txt");
+    std::wifstream paramfile(paramspath);
+    paramfile.imbue(std::locale(paramfile.getloc(), new std::codecvt_utf8_utf16<wchar_t, 0x10FFFF, std::consume_header>));
+
     if (paramfile.good()){
-        std::string readparam;
-        while (std::getline(paramfile, readparam, '\n')){
+        std::wstring readparam;
+        while (std::getline(paramfile, readparam)){
             fileargs.push_back(readparam);
         }
     }
     paramfile.close();
-    remove("dsuparams.txt");
+    std::filesystem::remove(paramspath);
+
+    std::cerr << "loaded " << fileargs.size() << " parameters from file\n";
 
     if (fileargs.size() == 0){
-        WCHAR selfExeName[MAX_PATH*10];
-        WCHAR selfDirName[MAX_PATH*10];
+        wchar_t selfExeName[MAX_PATH*10];
+        wchar_t selfDirName[MAX_PATH*10];
         GetModuleFileNameW(NULL, selfExeName, MAX_PATH*10);
         GetCurrentDirectoryW(MAX_PATH*10, selfDirName);
 
         std::wstring commname(selfExeName);
-        size_t beg = commname.rfind(L"\\");
-        commname.insert(beg, L"\\dsu");
+        commname.insert(commname.rfind(L"\\"), L"\\dsu");
         commname = L"\"" + commname + L"\"";
-        std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
+
         for (int i = 1; i < argc; i++){
-            commname.append(L" ");
-            commname.append(converter.from_bytes(std::string(argv[i])));
+            commname.append(L" \"");
+            commname.append(std::wstring(argv[i]));
+            commname.append(L"\"");
         }
 
-        WCHAR quotedfile[MAX_PATH*10];
-        wcscpy(quotedfile, commname.c_str());
-
+        wcscpy(selfExeName, commname.c_str());
         wcscat(selfDirName, L"\\dsu");
 
         STARTUPINFOW taskinfo;
@@ -122,7 +133,7 @@ int main(int argc, char* argv[]){
         taskinfo.cb = sizeof(taskinfo);
         ZeroMemory(&newprocinfo, sizeof(newprocinfo));
         
-        CreateProcessW(NULL, quotedfile, NULL, NULL, FALSE, 0, NULL, selfDirName, &taskinfo, &newprocinfo);
+        CreateProcessW(NULL, selfExeName, NULL, NULL, FALSE, 0, NULL, selfDirName, &taskinfo, &newprocinfo);
         return 1;
     }
     
@@ -157,26 +168,26 @@ int main(int argc, char* argv[]){
     cemustartinfo.cb = sizeof(cemustartinfo);
     ZeroMemory( &cemuprocessinfo, sizeof(cemuprocessinfo) );
 
-    WCHAR CEMUEXESTR[MAX_PATH*10];
-    WCHAR CEMUFOLDER[MAX_PATH*10];
+    wchar_t CEMUEXESTR[MAX_PATH*10];
+    wchar_t CEMUFOLDER[MAX_PATH*10];
 
-    std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> utfshifter;
-
-    std::wstring cemucommand = utfshifter.from_bytes(cemuexec);
+    std::wstring cemucommand = cemuexec;
     std::wstring cemudir = cemucommand;
     cemucommand = L"\"" + cemucommand + L"\"";
     for (int i = 1; i < fileargs.size(); i++){
         cemucommand.append(L" ");
-        cemucommand.append(L"\"" + utfshifter.from_bytes(fileargs[i]) + L"\"" );
+        cemucommand.append(L"\"" + fileargs[i] + L"\"" );
     }
-    cemudir.erase(cemudir.rfind(L"\\") + 1 );
+    cemudir.erase( cemudir.rfind(L"\\") );
     
     wcscpy(CEMUEXESTR, cemucommand.c_str() );
     wcscpy(CEMUFOLDER, cemudir.c_str() );
 
+    std::cerr << "Starting target emulator\n";
+
     CreateProcessW(NULL, CEMUEXESTR, NULL, NULL, FALSE, 0, NULL, CEMUFOLDER, &cemustartinfo, &cemuprocessinfo);
     
-
+    std::cerr << "Starting SteamInput\n";
 
     SteamAPI_Init();
     
