@@ -1,3 +1,5 @@
+#define _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING
+
 #include <iostream>
 #include <string>
 #include <steam_api.h>
@@ -31,6 +33,7 @@ struct subscription{
     uint32_t clientid = 0;
     sockaddr_in clientaddr;
     std::chrono::steady_clock::time_point lastrequest;
+    uint8_t slot;
 };
 
 
@@ -227,7 +230,10 @@ int wmain(int argc, wchar_t* argv[]){
     for (int i = 0; i < analogActions.size(); i++){
         analoghandles[analogActions[i]] = SteamInput()->GetAnalogActionHandle(analogActions[i].c_str());
     }
+    ControllerActionSetHandle_t actset = SteamInput()->GetActionSetHandle("DSUControls");
 
+    InputHandle_t controllers[STEAM_INPUT_MAX_COUNT];
+    int controllers_num;
 
     std::chrono::steady_clock::time_point lastcemucheck = std::chrono::steady_clock::now();
 
@@ -235,14 +241,27 @@ int wmain(int argc, wchar_t* argv[]){
 
     uint32_t reports = 0;
 
-    uint8_t touchpad_id = 0;
-    bool last_touchpad_state = false;
-    uint16_t touchpad_x_adj = 0;
-    uint16_t touchpad_y_adj = 0;
+    uint8_t touchpad_id[STEAM_INPUT_MAX_COUNT];
+    bool last_touchpad_state[STEAM_INPUT_MAX_COUNT];
+    uint16_t touchpad_x_adj[STEAM_INPUT_MAX_COUNT];
+    uint16_t touchpad_y_adj[STEAM_INPUT_MAX_COUNT];
+    for (int handle_idx = 0; handle_idx < STEAM_INPUT_MAX_COUNT; handle_idx++){
+        touchpad_id[handle_idx] = 0;
+        last_touchpad_state[handle_idx] = false;
+        touchpad_x_adj[handle_idx] = 0;
+        touchpad_y_adj[handle_idx] = 0;
+    }
 
     DWORD procstat = STILL_ACTIVE;
     while(procstat == STILL_ACTIVE){
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+        SteamInput()->ActivateActionSet(STEAM_INPUT_HANDLE_ALL_CONTROLLERS, actset);
+        SteamInput()->RunFrame();
+        uint64_t datacapture = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        reports++;
+        controllers_num = SteamInput()->GetConnectedControllers(controllers);
+
         if ( (std::chrono::steady_clock::now() - lastcemucheck) > std::chrono::milliseconds(500) ){
             lastcemucheck = std::chrono::steady_clock::now();
             GetExitCodeProcess(cemuprocessinfo.hProcess, &procstat);
@@ -266,11 +285,16 @@ int wmain(int argc, wchar_t* argv[]){
                 std::cerr << "CANNOT GET BUFFER SIZE" << std::endl;
                 break;
             }
+
             if (packetbytes == SOCKET_ERROR){
                 //std::cerr << "SOCKET ERROR " << sockError << std::endl;
                 continue;
             }
 
+            if (packetbytes < 20){
+                std::cerr << "PACKET TOO SHORT < 20B" << std::endl;
+                continue;
+            }
 
             if ( strcmp("DSUC", std::string((char*)UDPrecv, 4).c_str()) != 0){
                 std::cerr << "WRONG PACKET MAGIC" << std::endl;
@@ -335,7 +359,7 @@ int wmain(int argc, wchar_t* argv[]){
                     *(uint32_t *)(response+16) = 0x100001;
                     *(uint8_t *)(response+20) = slotID;
 
-                    if (slotID != 0){
+                    if (slotID + 1 > controllers_num){
                         memset(response+21, 0, 11);
                     }
                     else{
@@ -361,15 +385,18 @@ int wmain(int argc, wchar_t* argv[]){
                 bool registerall = *(uint8_t*)(UDPrecv+20) == 0;
 
                 uint8_t slottoreport = *(uint8_t*)(UDPrecv+21);
+                if (registerall){
+                    slottoreport = 5;
+                }
                 std::byte mactoreport[6];
                 memcpy(mactoreport, UDPrecv+22, 6);
 
-                if ((slotregistr && slottoreport == 0)|| registerall){
+                if (slotregistr || registerall){
                     
                     bool alreadyexists = false;
 
                     for (int i = 0; i < subs.size(); i++){
-                        if (subs[i].clientaddr.sin_port == UDPClientAddr.sin_port && subs[i].clientaddr.sin_addr.S_un.S_addr == UDPClientAddr.sin_addr.S_un.S_addr){
+                        if (subs[i].clientaddr.sin_port == UDPClientAddr.sin_port && subs[i].clientaddr.sin_addr.S_un.S_addr == UDPClientAddr.sin_addr.S_un.S_addr && subs[i].slot == slottoreport){
                             alreadyexists = true;
                             subs[i].lastrequest = std::chrono::steady_clock::now();
                             break;
@@ -381,6 +408,7 @@ int wmain(int argc, wchar_t* argv[]){
                         memcpy(&newsub.clientaddr, &UDPClientAddr, sizeof(UDPClientAddr));
                         newsub.lastrequest = std::chrono::steady_clock::now();
                         newsub.clientid = DSUclientID;
+                        newsub.slot = slottoreport;
 
                         subs.push_back(newsub);
                     }
@@ -390,178 +418,137 @@ int wmain(int argc, wchar_t* argv[]){
 
         }
 
-        InputHandle_t controllers[STEAM_INPUT_MAX_COUNT];
-        //for (int chandidx = 0; chandidx < STEAM_INPUT_MAX_COUNT; chandidx++){
-        //    controllers[chandidx] = 0;
-        //}
-        SteamInput()->GetConnectedControllers(controllers);
-        //if (controllers[0] == 0){
-        //    continue;
-        //}
-        
+        for (int handle_idx = 0; handle_idx < controllers_num; handle_idx++){
 
-        ESteamInputType controllerType = SteamInput()->GetInputTypeForHandle(controllers[0]);
+            std::byte response[100];
 
-        ControllerActionSetHandle_t actset = SteamInput()->GetActionSetHandle("DSUControls");
-        SteamInput()->ActivateActionSet(controllers[0], actset);
+            char* magic = "DSUS";
+            memcpy(response, magic, 4);
 
-        
-        SteamInput()->RunFrame();
-        uint64_t datacapture = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+            *(uint16_t *)(response+4) = 1001;
+            *(uint16_t *)(response+6) = 84;
+            *(uint32_t *)(response+12) = 0xB16B00B5;
+            *(uint32_t *)(response+16) = 0x100002;
 
+            *(uint8_t *)(response+20) = handle_idx;
+            *(uint8_t *)(response+21) = 2;
+            *(uint8_t *)(response+22) = 2;
+            *(uint8_t *)(response+23) = 1;
+            memset(response+24, 0, 6);
+            *(uint8_t *)(response+30) = 0xEF;
 
+            *(uint8_t *)(response+31) = 1;
+            *(uint32_t *)(response+32) = reports;
 
-        std::byte response[100];
+            uint8_t digitals1 = 0;
+            uint8_t digitals2 = 0;
+            digitals1 = (digitals1 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["DpadLeft"]).bState;
+            digitals1 = (digitals1 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["DpadDown"]).bState;
+            digitals1 = (digitals1 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["DpadRight"]).bState;
+            digitals1 = (digitals1 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["DpadUp"]).bState;
+            digitals1 = (digitals1 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["Start"]).bState;
+            digitals1 = (digitals1 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["RJoystickPress"]).bState;
+            digitals1 = (digitals1 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["LJoystickPress"]).bState;
+            digitals1 = (digitals1 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["Select"]).bState;
+            digitals2 = (digitals2 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["X"]).bState;
+            digitals2 = (digitals2 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["A"]).bState;
+            digitals2 = (digitals2 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["B"]).bState;
+            digitals2 = (digitals2 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["Y"]).bState;
+            digitals2 = (digitals2 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["R1"]).bState;
+            digitals2 = (digitals2 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["L1"]).bState;
+            digitals2 = (digitals2 << 1) | (uint8_t)( SteamInput()->GetAnalogActionData(controllers[handle_idx], analoghandles["RightTrigger"]).x == 1.00);
+            digitals2 = (digitals2 << 1) | (uint8_t)( SteamInput()->GetAnalogActionData(controllers[handle_idx], analoghandles["LeftTrigger"]).x == 1.00);
 
-        char* magic = "DSUS";
-        memcpy(response, magic, 4);
+            *(uint8_t *)(response+36) = digitals1;
+            *(uint8_t *)(response+37) = digitals2;
 
-        *(uint16_t *)(response+4) = 1001;
-        *(uint16_t *)(response+6) = 84;
-        *(uint32_t *)(response+12) = 0xB16B00B5;
-        *(uint32_t *)(response+16) = 0x100002;
+            *(uint8_t *)(response+38) = SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["Home"]).bState ? 0xFF : 0x00;
+            *(uint8_t *)(response+39) = SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["Touch"]).bState ? 0xFF : 0x00;
 
-        *(uint8_t *)(response+20) = 0;
-        *(uint8_t *)(response+21) = 2;
-        *(uint8_t *)(response+22) = 2;
-        *(uint8_t *)(response+23) = 1;
-        memset(response+24, 0, 6);
-        *(uint8_t *)(response+30) = 0xEF;
+            
+            *(uint8_t *)(response+40) = min(max(128 + (SteamInput()->GetAnalogActionData(controllers[handle_idx], analoghandles["LeftJoystick"]).x * 128.0),0),255);
+            *(uint8_t *)(response+41) = min(max(128 + (SteamInput()->GetAnalogActionData(controllers[handle_idx], analoghandles["LeftJoystick"]).y * 128.0),0),255);
+            *(uint8_t *)(response+42) = min(max(128 + (SteamInput()->GetAnalogActionData(controllers[handle_idx], analoghandles["RightJoystick"]).x * 128.0),0),255);
+            *(uint8_t *)(response+43) = min(max(128 + (SteamInput()->GetAnalogActionData(controllers[handle_idx], analoghandles["RightJoystick"]).y * 128.0),0),255);
+            
+            *(uint8_t *)(response+44) = SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["DpadLeft"]).bState * 255;
+            *(uint8_t *)(response+45) = SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["DpadDown"]).bState * 255;
+            *(uint8_t *)(response+46) = SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["DpadRight"]).bState * 255;
+            *(uint8_t *)(response+47) = SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["DpadUp"]).bState * 255;
+            *(uint8_t *)(response+48) = SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["X"]).bState * 255;
+            *(uint8_t *)(response+49) = SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["A"]).bState * 255;
+            *(uint8_t *)(response+50) = SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["B"]).bState * 255;
+            *(uint8_t *)(response+51) = SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["Y"]).bState * 255;
+            *(uint8_t *)(response+52) = SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["R1"]).bState * 255;
+            *(uint8_t *)(response+53) = SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["L1"]).bState * 255;
 
-        *(uint8_t *)(response+31) = 1;
-        *(uint32_t *)(response+32) = reports++;
+            *(uint8_t *)(response+54) = min(max((SteamInput()->GetAnalogActionData(controllers[handle_idx], analoghandles["RightTrigger"]).x * 255.0),0),255);
+            *(uint8_t *)(response+55) = min(max((SteamInput()->GetAnalogActionData(controllers[handle_idx], analoghandles["LeftTrigger"]).x * 255.0),0),255);
 
-        uint8_t digitals1 = 0;
-        uint8_t digitals2 = 0;
-        digitals1 = (digitals1 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[0], digitalhandles["DpadLeft"]).bState;
-        digitals1 = (digitals1 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[0], digitalhandles["DpadDown"]).bState;
-        digitals1 = (digitals1 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[0], digitalhandles["DpadRight"]).bState;
-        digitals1 = (digitals1 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[0], digitalhandles["DpadUp"]).bState;
-        digitals1 = (digitals1 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[0], digitalhandles["Start"]).bState;
-        digitals1 = (digitals1 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[0], digitalhandles["RJoystickPress"]).bState;
-        digitals1 = (digitals1 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[0], digitalhandles["LJoystickPress"]).bState;
-        digitals1 = (digitals1 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[0], digitalhandles["Select"]).bState;
-        digitals2 = (digitals2 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[0], digitalhandles["X"]).bState;
-        digitals2 = (digitals2 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[0], digitalhandles["A"]).bState;
-        digitals2 = (digitals2 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[0], digitalhandles["B"]).bState;
-        digitals2 = (digitals2 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[0], digitalhandles["Y"]).bState;
-        digitals2 = (digitals2 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[0], digitalhandles["R1"]).bState;
-        digitals2 = (digitals2 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[0], digitalhandles["L1"]).bState;
-        digitals2 = (digitals2 << 1) | (uint8_t)( SteamInput()->GetAnalogActionData(controllers[0], analoghandles["RightTrigger"]).x == 1.00);
-        digitals2 = (digitals2 << 1) | (uint8_t)( SteamInput()->GetAnalogActionData(controllers[0], analoghandles["LeftTrigger"]).x == 1.00);
-
-        *(uint8_t *)(response+36) = digitals1;
-        *(uint8_t *)(response+37) = digitals2;
-
-        *(uint8_t *)(response+38) = SteamInput()->GetDigitalActionData(controllers[0], digitalhandles["Home"]).bState ? 0xFF : 0x00;
-        *(uint8_t *)(response+39) = SteamInput()->GetDigitalActionData(controllers[0], digitalhandles["Touch"]).bState ? 0xFF : 0x00;
-
-        
-        *(uint8_t *)(response+40) = min(max(128 + (SteamInput()->GetAnalogActionData(controllers[0], analoghandles["LeftJoystick"]).x * 128.0),0),255);
-        *(uint8_t *)(response+41) = min(max(128 + (SteamInput()->GetAnalogActionData(controllers[0], analoghandles["LeftJoystick"]).y * 128.0),0),255);
-        *(uint8_t *)(response+42) = min(max(128 + (SteamInput()->GetAnalogActionData(controllers[0], analoghandles["RightJoystick"]).x * 128.0),0),255);
-        *(uint8_t *)(response+43) = min(max(128 + (SteamInput()->GetAnalogActionData(controllers[0], analoghandles["RightJoystick"]).y * 128.0),0),255);
-        
-        *(uint8_t *)(response+44) = SteamInput()->GetDigitalActionData(controllers[0], digitalhandles["DpadLeft"]).bState * 255;
-        *(uint8_t *)(response+45) = SteamInput()->GetDigitalActionData(controllers[0], digitalhandles["DpadDown"]).bState * 255;
-        *(uint8_t *)(response+46) = SteamInput()->GetDigitalActionData(controllers[0], digitalhandles["DpadRight"]).bState * 255;
-        *(uint8_t *)(response+47) = SteamInput()->GetDigitalActionData(controllers[0], digitalhandles["DpadUp"]).bState * 255;
-        *(uint8_t *)(response+48) = SteamInput()->GetDigitalActionData(controllers[0], digitalhandles["X"]).bState * 255;
-        *(uint8_t *)(response+49) = SteamInput()->GetDigitalActionData(controllers[0], digitalhandles["A"]).bState * 255;
-        *(uint8_t *)(response+50) = SteamInput()->GetDigitalActionData(controllers[0], digitalhandles["B"]).bState * 255;
-        *(uint8_t *)(response+51) = SteamInput()->GetDigitalActionData(controllers[0], digitalhandles["Y"]).bState * 255;
-        *(uint8_t *)(response+52) = SteamInput()->GetDigitalActionData(controllers[0], digitalhandles["R1"]).bState * 255;
-        *(uint8_t *)(response+53) = SteamInput()->GetDigitalActionData(controllers[0], digitalhandles["L1"]).bState * 255;
-
-        *(uint8_t *)(response+54) = min(max((SteamInput()->GetAnalogActionData(controllers[0], analoghandles["RightTrigger"]).x * 255.0),0),255);
-        *(uint8_t *)(response+55) = min(max((SteamInput()->GetAnalogActionData(controllers[0], analoghandles["LeftTrigger"]).x * 255.0),0),255);
-
-        bool touchpad_active = SteamInput()->GetDigitalActionData(controllers[0], digitalhandles["TPActive"]).bState;
-        float touchpad_x = SteamInput()->GetAnalogActionData(controllers[0], analoghandles["TPPosition"]).x;
-        float touchpad_y = SteamInput()->GetAnalogActionData(controllers[0], analoghandles["TPPosition"]).y;
+            bool touchpad_active = SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["TPActive"]).bState;
+            float touchpad_x = SteamInput()->GetAnalogActionData(controllers[handle_idx], analoghandles["TPPosition"]).x;
+            float touchpad_y = SteamInput()->GetAnalogActionData(controllers[handle_idx], analoghandles["TPPosition"]).y;
 
 
-        if (touchpad_active){
-            if (last_touchpad_state == false){
-                touchpad_id++;
+            if (touchpad_active){
+                if (last_touchpad_state[handle_idx] == false){
+                    touchpad_id[handle_idx]++;
+                }
+                touchpad_x_adj[handle_idx] = min(max((960 + (touchpad_x * 960)),0),1919);
+                touchpad_y_adj[handle_idx] = min(max((471 + (touchpad_y * 471)),0),942);
             }
-            touchpad_x_adj = min(max((960 + (touchpad_x * 960)),0),1919);
-            touchpad_y_adj = min(max((471 + (touchpad_y * 471)),0),942);
-        }
-        *(uint8_t *)(response+56) = (touchpad_active ? 1 : 0);
-        *(uint8_t *)(response+57) = touchpad_id;
-        *(uint16_t*)(response+58) = touchpad_x_adj;
-        *(uint16_t*)(response+60) = touchpad_y_adj;
+            *(uint8_t *)(response+56) = (touchpad_active ? 1 : 0);
+            *(uint8_t *)(response+57) = touchpad_id[handle_idx];
+            *(uint16_t*)(response+58) = touchpad_x_adj[handle_idx];
+            *(uint16_t*)(response+60) = touchpad_y_adj[handle_idx];
 
-        //std::cerr << "TP last " << (last_touchpad_state ? "true" :  "false") << " TP now " << (touchpad_active ? "true" :  "false") << " TouchID " << touchpad_id << " Xreal " << touchpad_x << " Yreal " << touchpad_y << " Xdsu " << touchpad_x_adj << " Ydsu " << touchpad_y_adj << "\n";
+            last_touchpad_state[handle_idx] = touchpad_active;
 
+            memset(response+62, 0, 6);
 
-        last_touchpad_state = touchpad_active;
+            *(uint64_t *)(response+68) = datacapture;
 
-        memset(response+62, 0, 6);
-
-        *(uint64_t *)(response+68) = datacapture;
-
-        if (controllerType == k_ESteamInputType_SteamController){
-            *(float *)(response+76) = -(float)(SteamInput()->GetMotionData(controllers[0]).posAccelX) / 16384.0;
-            *(float *)(response+80) = -(float)(SteamInput()->GetMotionData(controllers[0]).posAccelZ) / 16384.0;
-            *(float *)(response+84) = (float)(SteamInput()->GetMotionData(controllers[0]).posAccelY) / 16384.0;
-            *(float *)(response+88) = (float)(SteamInput()->GetMotionData(controllers[0]).rotVelX) / 16.0;
-            *(float *)(response+92) = -(float)(SteamInput()->GetMotionData(controllers[0]).rotVelZ) / 16.0;
-            *(float *)(response+96) = -(float)(SteamInput()->GetMotionData(controllers[0]).rotVelY) / 16.0;
-        }
-        else if (controllerType == k_ESteamInputType_PS4Controller || controllerType == k_ESteamInputType_PS3Controller){
-            *(float *)(response+76) = -(float)(SteamInput()->GetMotionData(controllers[0]).posAccelX) / 16384.0;
-            *(float *)(response+80) = -(float)(SteamInput()->GetMotionData(controllers[0]).posAccelY) / 16384.0;
-            *(float *)(response+84) = -(float)(SteamInput()->GetMotionData(controllers[0]).posAccelZ) / 16384.0;
-            *(float *)(response+88) = (float)(SteamInput()->GetMotionData(controllers[0]).rotVelX) / 32.0;
-            *(float *)(response+92) = -(float)(SteamInput()->GetMotionData(controllers[0]).rotVelZ) / 32.0;
-            *(float *)(response+96) = -(float)(SteamInput()->GetMotionData(controllers[0]).rotVelY) / 32.0;
-        }
-        else if (controllerType == k_ESteamInputType_SwitchJoyConSingle || controllerType == k_ESteamInputType_SwitchJoyConPair || controllerType == k_ESteamInputType_SwitchProController){
-            *(float *)(response+76) = -(float)(SteamInput()->GetMotionData(controllers[0]).posAccelX) / 16384.0;
-            *(float *)(response+80) = -(float)(SteamInput()->GetMotionData(controllers[0]).posAccelY) / 16384.0;
-            *(float *)(response+84) = -(float)(SteamInput()->GetMotionData(controllers[0]).posAccelZ) / 16384.0;
-            *(float *)(response+88) = (float)(SteamInput()->GetMotionData(controllers[0]).rotVelX) / 32.0;
-            *(float *)(response+92) = -(float)(SteamInput()->GetMotionData(controllers[0]).rotVelZ) / 32.0;
-            *(float *)(response+96) = -(float)(SteamInput()->GetMotionData(controllers[0]).rotVelY) / 32.0;
-        }
-        else if (controllerType == k_ESteamInputType_AndroidController || controllerType == k_ESteamInputType_AppleMFiController || controllerType == k_ESteamInputType_MobileTouch){ //PLACEHOLDER
-            *(float *)(response+76) = (float)(SteamInput()->GetMotionData(controllers[0]).posAccelX);
-            *(float *)(response+80) = (float)(SteamInput()->GetMotionData(controllers[0]).posAccelY);
-            *(float *)(response+84) = (float)(SteamInput()->GetMotionData(controllers[0]).posAccelZ);
-            *(float *)(response+88) = (float)(SteamInput()->GetMotionData(controllers[0]).rotVelX);
-            *(float *)(response+92) = (float)(SteamInput()->GetMotionData(controllers[0]).rotVelY);
-            *(float *)(response+96) = (float)(SteamInput()->GetMotionData(controllers[0]).rotVelZ);
-        }
-        else {
-            *(float *)(response+76) = 0.0;
-            *(float *)(response+80) = -1.0;
-            *(float *)(response+84) = 0.0;
-            *(float *)(response+88) = 0.0;
-            *(float *)(response+92) = 0.0;
-            *(float *)(response+96) = 0.0;
-        }
-
-        *(uint32_t *)(response+8) = 0;
-        *(uint32_t *)(response+8) = crc32(response, 100);
-
-        for (int i = 0; i < subs.size(); i++){
-            if (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - subs[i].lastrequest).count() < 5){
-                sendto(DSUSocket, (char *)(response), 100, 0, (SOCKADDR *)(&subs[i].clientaddr), sizeof(subs[i].clientaddr));
+            ESteamInputType controllerType = SteamInput()->GetInputTypeForHandle(controllers[handle_idx]);
+            if (controllerType == k_ESteamInputType_SteamController){
+                *(float *)(response+76) = -(float)(SteamInput()->GetMotionData(controllers[handle_idx]).posAccelX) / 16384.0;
+                *(float *)(response+80) = -(float)(SteamInput()->GetMotionData(controllers[handle_idx]).posAccelZ) / 16384.0;
+                *(float *)(response+84) = (float)(SteamInput()->GetMotionData(controllers[handle_idx]).posAccelY) / 16384.0;
+                *(float *)(response+88) = (float)(SteamInput()->GetMotionData(controllers[handle_idx]).rotVelX) / 16.0;
+                *(float *)(response+92) = -(float)(SteamInput()->GetMotionData(controllers[handle_idx]).rotVelZ) / 16.0;
+                *(float *)(response+96) = -(float)(SteamInput()->GetMotionData(controllers[handle_idx]).rotVelY) / 16.0;
             }
-            else{
-                subs.erase(subs.begin() + i);
-                i--;
+            else {
+                *(float *)(response+76) = -(float)(SteamInput()->GetMotionData(controllers[handle_idx]).posAccelX) / 16384.0;
+                *(float *)(response+80) = -(float)(SteamInput()->GetMotionData(controllers[handle_idx]).posAccelY) / 16384.0;
+                *(float *)(response+84) = -(float)(SteamInput()->GetMotionData(controllers[handle_idx]).posAccelZ) / 16384.0;
+                *(float *)(response+88) = (float)(SteamInput()->GetMotionData(controllers[handle_idx]).rotVelX) / 32.0;
+                *(float *)(response+92) = -(float)(SteamInput()->GetMotionData(controllers[handle_idx]).rotVelZ) / 32.0;
+                *(float *)(response+96) = -(float)(SteamInput()->GetMotionData(controllers[handle_idx]).rotVelY) / 32.0;
             }
+
+            *(uint32_t *)(response+8) = 0;
+            *(uint32_t *)(response+8) = crc32(response, 100);
+
+            for (int i = 0; i < subs.size(); i++){
+                if (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - subs[i].lastrequest).count() < 5){
+                    if (subs[i].slot == 5 || subs[i].slot == handle_idx){
+                        sendto(DSUSocket, (char *)(response), 100, 0, (SOCKADDR *)(&subs[i].clientaddr), sizeof(subs[i].clientaddr));
+                    }
+                }
+                else{
+                    subs.erase(subs.begin() + i);
+                    i--;
+                }
+            }
+
+
+            /*
+            InputMotionData_t wynik;
+            wynik = SteamInput()->GetMotionData(controllers[handle_idx]);
+            std::cout << wynik.posAccelX << " " << wynik.posAccelY << " " << wynik.posAccelZ << " " << wynik.rotVelX << " " << wynik.rotVelY << " " << wynik.rotVelZ << "\n" ;
+            */
+
         }
-
-
-        /*
-        InputMotionData_t wynik;
-        wynik = SteamInput()->GetMotionData(controllers[0]);
-        std::cout << wynik.posAccelX << " " << wynik.posAccelY << " " << wynik.posAccelZ << " " << wynik.rotVelX << " " << wynik.rotVelY << " " << wynik.rotVelZ << "\n" ;
-        */
         
     }
 
