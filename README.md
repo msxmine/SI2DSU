@@ -6,7 +6,7 @@ It enables motion controls integration for Steam Controller/Dualshock 4/Switch P
 Because it uses SteamInput, it also works over Steam Link/RemotePlay/In-Home-Streaming.
 
 # Download
-[Latest version](https://github.com/msxmine/SI2DSU/releases/download/0.2/release.zip)
+[Latest version](https://github.com/msxmine/SI2DSU/releases/download/0.3/release.zip)
 
 # Installation
 
