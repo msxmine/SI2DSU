@@ -1,5 +1,3 @@
-#define _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING
-
 #include <iostream>
 #include <string>
 #include <steam_api.h>
@@ -36,51 +34,125 @@ struct subscription{
     uint8_t slot;
 };
 
+std::string w32ToUtf(wchar_t* utf16cstr){
+    size_t cstrlen = WideCharToMultiByte(CP_UTF8, 0, utf16cstr, -1, NULL, 0, NULL, NULL);
+    char* translated = (char*)malloc(sizeof(char)*cstrlen);
+    WideCharToMultiByte(CP_UTF8, 0, utf16cstr, -1, translated, cstrlen, NULL, NULL);
+    std::string returned = std::string(translated);
+    free(translated);
+    return returned;
+}
 
-int wmain(int argc, wchar_t* argv[]){
+std::wstring utfToW32(std::string input){
+    size_t wstrlen = MultiByteToWideChar(CP_UTF8, 0, input.c_str(), -1, NULL, 0);
+    wchar_t* translated = (wchar_t*)malloc(sizeof(wchar_t)*wstrlen);
+    MultiByteToWideChar(CP_UTF8, 0, input.c_str(), -1, translated, wstrlen);
+    std::wstring returned = std::wstring(translated);
+    free(translated);
+    return returned;
+}
+
+std::string getCurrentExec(){
+    wchar_t selfExePath[MAX_PATH];
+    GetModuleFileNameW(NULL, selfExePath, MAX_PATH-1);
+    return w32ToUtf(selfExePath);
+}
+
+boolean steamProfileActive = true;
+boolean getDigitalState(InputHandle_t controller, InputDigitalActionHandle_t action){
+    if (steamProfileActive){
+        return SteamInput()->GetDigitalActionData(controller, action).bState;
+    }
+    else{
+        return false;
+    }
+}
+
+struct analogData {
+    float x;
+    float y;
+};
+
+struct analogData getAnalogState(InputHandle_t controller, InputAnalogActionHandle_t action){
+    struct analogData result;
+    if (steamProfileActive){
+        InputAnalogActionData_t readRes = SteamInput()->GetAnalogActionData(controller, action);
+        result.x = readRes.x;
+        result.y = readRes.y;
+    }
+    else{
+        result.x = 0.0;
+        result.y = 0.0;
+    }
+    return result;
+}
+
+STARTUPINFOW taskinfo;
+PROCESS_INFORMATION newprocinfo;
+
+int spawnProgram(std::string executable, std::vector<std::string> params, std::string workingdir){
+    std::string commandline = "\"" + executable + "\"";
+    for (int i = 0; i < params.size(); i++){
+        commandline += (" \"" + params[i] + "\"");
+    }
+    std::wstring utf16CL = utfToW32(commandline);
+    std::wstring utf16WD = utfToW32(workingdir);
+
+    wchar_t winCommandLine[MAX_PATH+33000];
+    wchar_t winWorkingDir[MAX_PATH+1];
+    wcscpy(winCommandLine, utf16CL.c_str());
+    wcscpy(winWorkingDir, utf16WD.c_str());
+
+    ZeroMemory(&taskinfo, sizeof(taskinfo));
+    taskinfo.cb = sizeof(taskinfo);
+    ZeroMemory(&newprocinfo, sizeof(newprocinfo));
+
+    return CreateProcessW(NULL, winCommandLine, NULL, NULL, FALSE, 0, NULL, winWorkingDir, &taskinfo, &newprocinfo);
+}
+
+boolean checkSpawnedAlive(){
+    DWORD procstat = STILL_ACTIVE;
+    GetExitCodeProcess(newprocinfo.hProcess, &procstat);
+    return (procstat == STILL_ACTIVE);
+}
+
+
+
+int wmain(int argc, wchar_t* clArguments[]){
+    std::vector<std::string> argv;
+    for (int i = 0; i < argc; i++){
+        argv.push_back(w32ToUtf(clArguments[i]));
+    }
 
     std::filesystem::path paramspath = (std::filesystem::temp_directory_path() /= std::string("dsuparams.txt"));
     std::cerr << "Path to parameter file " << paramspath << std::endl;
 
     if (argc > 1){
-        if ( wcscmp(argv[1], L"-dsumode") == 0 ){
+        if ( argv[1] == "-dsumode" ){
             std::cerr << "Launched with " << argc-1 << " arguments" << std::endl;
 
             std::filesystem::remove(paramspath);
-            std::wofstream paramstore(paramspath);
-            paramstore.imbue(std::locale(paramstore.getloc(), new std::codecvt_utf8_utf16<wchar_t, 0x10FFFF, std::generate_header>));
+            std::ofstream paramstore(paramspath);
 
             for (int i = 1; i < argc; i++){
-                paramstore << argv[i] << L'\n';
+                paramstore << argv[i] << '\n';
             }
             paramstore.close();
 
-            wchar_t selfExeName[MAX_PATH*10];
-            GetModuleFileNameW(NULL, selfExeName, MAX_PATH*10);
+            std::string myExePath = getCurrentExec();
+            std::vector<std::string> emptyArgs;
+            std::string myDirectory = (std::filesystem::current_path()).u8string();
 
-            wchar_t quotedfile[MAX_PATH*10];
-            wcscpy(quotedfile, L"\"");
-            wcscat(quotedfile, selfExeName);
-            wcscat(quotedfile, L"\"");
-
-            STARTUPINFOW taskinfo;
-            PROCESS_INFORMATION newprocinfo;
-            ZeroMemory(&taskinfo, sizeof(taskinfo));
-            taskinfo.cb = sizeof(taskinfo);
-            ZeroMemory(&newprocinfo, sizeof(newprocinfo));
-            
-            CreateProcessW(NULL, quotedfile, NULL, NULL, FALSE, 0, NULL, NULL, &taskinfo, &newprocinfo);
+            spawnProgram(myExePath, emptyArgs, myDirectory);
             return 1;
 
         }
     }
 
     
-    std::wifstream settingsfile("dsusettings.txt");
-    settingsfile.imbue(std::locale(settingsfile.getloc(), new std::codecvt_utf8_utf16<wchar_t, 0x10FFFF, std::consume_header>));
-
-    std::wstring cemuexec = L"";
-    std::wstring idtext = L"";
+    std::ifstream settingsfile("dsusettings.txt");
+    std::string cemuexec = "";
+    std::string idtext = "";
     int fakeappid = 480;
     std::cerr << "Trying to load settings \n";
     if (settingsfile.good()){
@@ -90,53 +162,69 @@ int wmain(int argc, wchar_t* argv[]){
     }
     settingsfile.close();
 
-    if ( SteamAPI_RestartAppIfNecessary(fakeappid) ){
-        return 1;
-    }
-    std::cerr << "Steam API restart not necessary\n";
-
-    std::vector<std::wstring> fileargs;
-
-    std::wifstream paramfile(paramspath);
-    paramfile.imbue(std::locale(paramfile.getloc(), new std::codecvt_utf8_utf16<wchar_t, 0x10FFFF, std::consume_header>));
-
+    std::ifstream paramfile(paramspath);
+    std::vector<std::string> fileargs;
     if (paramfile.good()){
-        std::wstring readparam;
+        std::string readparam;
         while (std::getline(paramfile, readparam)){
             fileargs.push_back(readparam);
         }
     }
     paramfile.close();
     std::filesystem::remove(paramspath);
-
     std::cerr << "loaded " << fileargs.size() << " parameters from file\n";
 
-    if (fileargs.size() == 0){
-        wchar_t selfExeName[MAX_PATH*10];
-        wchar_t selfDirName[MAX_PATH*10];
-        GetModuleFileNameW(NULL, selfExeName, MAX_PATH*10);
-        GetCurrentDirectoryW(MAX_PATH*10, selfDirName);
+    boolean dsuMode = false;
+    boolean dsuSteamBind = true;
+    boolean dsuCustomEmu = false;
+    std::vector<std::string> emuParams;
+    std::string emuCustomExe = "";
 
-        std::wstring commname(selfExeName);
-        commname.insert(commname.rfind(L"\\"), L"\\dsu");
-        commname = L"\"" + commname + L"\"";
+    boolean clientargs = false;
+    for (int i = 0; i < fileargs.size(); i++){
+        dsuMode = true;
+        if (!clientargs){
+            if (fileargs[i] == "-dsumode"){
+                continue;
+            }
+            else if (fileargs[i] == "-dsumotiononly"){
+                dsuSteamBind = false;
+                steamProfileActive = false;
+                continue;
+            }
+            else if (fileargs[i] == "-dsuclientexe"){
+                if (i+1 < fileargs.size()){
+                    dsuCustomEmu = true;
+                    emuCustomExe = fileargs[i+1];
+                    i++;
+                    continue;
+                }
+            }
+            else{
+                clientargs = true;
+            }
+        }
+        emuParams.push_back(fileargs[i]);
+    }
+
+    if (dsuSteamBind){
+        if ( SteamAPI_RestartAppIfNecessary(fakeappid) ){
+            return 1;
+        }
+        std::cerr << "Steam API restart not necessary\n";
+    }
+
+    if (!dsuMode){
+        std::filesystem::path myExeName = std::filesystem::path(getCurrentExec()).filename();
+        std::filesystem::path myDirectory = std::filesystem::current_path();
+        std::string gameExe = (myDirectory / "dsu" / myExeName).u8string();
+        std::vector<std::string> gameArgs;
 
         for (int i = 1; i < argc; i++){
-            commname.append(L" \"");
-            commname.append(std::wstring(argv[i]));
-            commname.append(L"\"");
+            gameArgs.push_back(argv[i]);
         }
 
-        wcscpy(selfExeName, commname.c_str());
-        wcscat(selfDirName, L"\\dsu");
-
-        STARTUPINFOW taskinfo;
-        PROCESS_INFORMATION newprocinfo;
-        ZeroMemory(&taskinfo, sizeof(taskinfo));
-        taskinfo.cb = sizeof(taskinfo);
-        ZeroMemory(&newprocinfo, sizeof(newprocinfo));
-        
-        CreateProcessW(NULL, selfExeName, NULL, NULL, FALSE, 0, NULL, selfDirName, &taskinfo, &newprocinfo);
+        spawnProgram(gameExe, gameArgs, myDirectory.u8string());
         return 1;
     }
     
@@ -163,40 +251,14 @@ int wmain(int argc, wchar_t* argv[]){
     }
     freeaddrinfo(servresult);
     
-
-    
-    STARTUPINFOW cemustartinfo;
-    PROCESS_INFORMATION cemuprocessinfo;
-    ZeroMemory( &cemustartinfo, sizeof(cemustartinfo) );
-    cemustartinfo.cb = sizeof(cemustartinfo);
-    ZeroMemory( &cemuprocessinfo, sizeof(cemuprocessinfo) );
-
-    wchar_t CEMUEXESTR[MAX_PATH*10];
-    wchar_t CEMUFOLDER[MAX_PATH*10];
-
-    int firstclientargidx = 1;
-    if (fileargs.size() >= 3){
-        if (fileargs[1] == L"-dsuclientexe"){
-            cemuexec = fileargs[2];
-            firstclientargidx = 3;
-        }
+    std::string cemucommand = cemuexec;
+    if (dsuCustomEmu){
+        cemucommand = emuCustomExe;
     }
-
-    std::wstring cemucommand = cemuexec;
-    std::wstring cemudir = cemucommand;
-    cemucommand = L"\"" + cemucommand + L"\"";
-    for (int i = firstclientargidx; i < fileargs.size(); i++){
-        cemucommand.append(L" ");
-        cemucommand.append(L"\"" + fileargs[i] + L"\"" );
-    }
-    cemudir.erase( cemudir.rfind(L"\\") );
-    
-    wcscpy(CEMUEXESTR, cemucommand.c_str() );
-    wcscpy(CEMUFOLDER, cemudir.c_str() );
+    std::string cemudir = std::filesystem::path(cemucommand).remove_filename().u8string();
 
     std::cerr << "Starting target emulator\n";
-
-    if (CreateProcessW(NULL, CEMUEXESTR, NULL, NULL, FALSE, 0, NULL, CEMUFOLDER, &cemustartinfo, &cemuprocessinfo) == 0){
+    if (spawnProgram(cemucommand, emuParams, cemudir) == 0){
         std::cerr << "Failed to launch client\n";
         return 1;
     }
@@ -204,16 +266,7 @@ int wmain(int argc, wchar_t* argv[]){
     std::cerr << "Starting SteamInput\n";
 
     SteamAPI_Init();
-    
     SteamInput()->Init();
-
-    /*
-    InputHandle_t wcontrollers[STEAM_INPUT_MAX_COUNT];
-    SteamInput()->GetConnectedControllers(wcontrollers);
-
-    SteamInput()->ShowBindingPanel(wcontrollers[0]);
-    */
-   
 
     std::vector<subscription> subs;
 
@@ -224,13 +277,16 @@ int wmain(int argc, wchar_t* argv[]){
 
     std::map<std::string, InputDigitalActionHandle_t> digitalhandles;
     std::map<std::string, InputAnalogActionHandle_t> analoghandles;
-    for (int i = 0; i < digitalActions.size(); i++){
-        digitalhandles[digitalActions[i]] = SteamInput()->GetDigitalActionHandle(digitalActions[i].c_str());
+    ControllerActionSetHandle_t actset;
+    if (dsuSteamBind){
+        for (int i = 0; i < digitalActions.size(); i++){
+            digitalhandles[digitalActions[i]] = SteamInput()->GetDigitalActionHandle(digitalActions[i].c_str());
+        }
+        for (int i = 0; i < analogActions.size(); i++){
+            analoghandles[analogActions[i]] = SteamInput()->GetAnalogActionHandle(analogActions[i].c_str());
+        }
+        actset = SteamInput()->GetActionSetHandle("DSUControls");
     }
-    for (int i = 0; i < analogActions.size(); i++){
-        analoghandles[analogActions[i]] = SteamInput()->GetAnalogActionHandle(analogActions[i].c_str());
-    }
-    ControllerActionSetHandle_t actset = SteamInput()->GetActionSetHandle("DSUControls");
 
     InputHandle_t controllers[STEAM_INPUT_MAX_COUNT];
     int controllers_num;
@@ -252,11 +308,12 @@ int wmain(int argc, wchar_t* argv[]){
         touchpad_y_adj[handle_idx] = 0;
     }
 
-    DWORD procstat = STILL_ACTIVE;
-    while(procstat == STILL_ACTIVE){
+    boolean clientRunning = true;
+    while(clientRunning){
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
-
-        SteamInput()->ActivateActionSet(STEAM_INPUT_HANDLE_ALL_CONTROLLERS, actset);
+        if (dsuSteamBind){
+            SteamInput()->ActivateActionSet(STEAM_INPUT_HANDLE_ALL_CONTROLLERS, actset);
+        }
         SteamInput()->RunFrame();
         uint64_t datacapture = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
         reports++;
@@ -264,7 +321,7 @@ int wmain(int argc, wchar_t* argv[]){
 
         if ( (std::chrono::steady_clock::now() - lastcemucheck) > std::chrono::milliseconds(500) ){
             lastcemucheck = std::chrono::steady_clock::now();
-            GetExitCodeProcess(cemuprocessinfo.hProcess, &procstat);
+            clientRunning = checkSpawnedAlive();
         }
 
 
@@ -442,52 +499,52 @@ int wmain(int argc, wchar_t* argv[]){
 
             uint8_t digitals1 = 0;
             uint8_t digitals2 = 0;
-            digitals1 = (digitals1 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["DpadLeft"]).bState;
-            digitals1 = (digitals1 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["DpadDown"]).bState;
-            digitals1 = (digitals1 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["DpadRight"]).bState;
-            digitals1 = (digitals1 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["DpadUp"]).bState;
-            digitals1 = (digitals1 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["Start"]).bState;
-            digitals1 = (digitals1 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["RJoystickPress"]).bState;
-            digitals1 = (digitals1 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["LJoystickPress"]).bState;
-            digitals1 = (digitals1 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["Select"]).bState;
-            digitals2 = (digitals2 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["X"]).bState;
-            digitals2 = (digitals2 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["A"]).bState;
-            digitals2 = (digitals2 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["B"]).bState;
-            digitals2 = (digitals2 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["Y"]).bState;
-            digitals2 = (digitals2 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["R1"]).bState;
-            digitals2 = (digitals2 << 1) | (uint8_t)SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["L1"]).bState;
-            digitals2 = (digitals2 << 1) | (uint8_t)( SteamInput()->GetAnalogActionData(controllers[handle_idx], analoghandles["RightTrigger"]).x == 1.00);
-            digitals2 = (digitals2 << 1) | (uint8_t)( SteamInput()->GetAnalogActionData(controllers[handle_idx], analoghandles["LeftTrigger"]).x == 1.00);
+            digitals1 = (digitals1 << 1) | (uint8_t)getDigitalState(controllers[handle_idx], digitalhandles["DpadLeft"]);
+            digitals1 = (digitals1 << 1) | (uint8_t)getDigitalState(controllers[handle_idx], digitalhandles["DpadDown"]);
+            digitals1 = (digitals1 << 1) | (uint8_t)getDigitalState(controllers[handle_idx], digitalhandles["DpadRight"]);
+            digitals1 = (digitals1 << 1) | (uint8_t)getDigitalState(controllers[handle_idx], digitalhandles["DpadUp"]);
+            digitals1 = (digitals1 << 1) | (uint8_t)getDigitalState(controllers[handle_idx], digitalhandles["Start"]);
+            digitals1 = (digitals1 << 1) | (uint8_t)getDigitalState(controllers[handle_idx], digitalhandles["RJoystickPress"]);
+            digitals1 = (digitals1 << 1) | (uint8_t)getDigitalState(controllers[handle_idx], digitalhandles["LJoystickPress"]);
+            digitals1 = (digitals1 << 1) | (uint8_t)getDigitalState(controllers[handle_idx], digitalhandles["Select"]);
+            digitals2 = (digitals2 << 1) | (uint8_t)getDigitalState(controllers[handle_idx], digitalhandles["X"]);
+            digitals2 = (digitals2 << 1) | (uint8_t)getDigitalState(controllers[handle_idx], digitalhandles["A"]);
+            digitals2 = (digitals2 << 1) | (uint8_t)getDigitalState(controllers[handle_idx], digitalhandles["B"]);
+            digitals2 = (digitals2 << 1) | (uint8_t)getDigitalState(controllers[handle_idx], digitalhandles["Y"]);
+            digitals2 = (digitals2 << 1) | (uint8_t)getDigitalState(controllers[handle_idx], digitalhandles["R1"]);
+            digitals2 = (digitals2 << 1) | (uint8_t)getDigitalState(controllers[handle_idx], digitalhandles["L1"]);
+            digitals2 = (digitals2 << 1) | (uint8_t)( getAnalogState(controllers[handle_idx], analoghandles["RightTrigger"]).x == 1.00);
+            digitals2 = (digitals2 << 1) | (uint8_t)( getAnalogState(controllers[handle_idx], analoghandles["LeftTrigger"]).x == 1.00);
 
             *(uint8_t *)(response+36) = digitals1;
             *(uint8_t *)(response+37) = digitals2;
 
-            *(uint8_t *)(response+38) = SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["Home"]).bState ? 0xFF : 0x00;
-            *(uint8_t *)(response+39) = SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["Touch"]).bState ? 0xFF : 0x00;
+            *(uint8_t *)(response+38) = getDigitalState(controllers[handle_idx], digitalhandles["Home"]) ? 0xFF : 0x00;
+            *(uint8_t *)(response+39) = getDigitalState(controllers[handle_idx], digitalhandles["Touch"]) ? 0xFF : 0x00;
 
             
-            *(uint8_t *)(response+40) = min(max(128 + (SteamInput()->GetAnalogActionData(controllers[handle_idx], analoghandles["LeftJoystick"]).x * 128.0),0),255);
-            *(uint8_t *)(response+41) = min(max(128 + (SteamInput()->GetAnalogActionData(controllers[handle_idx], analoghandles["LeftJoystick"]).y * 128.0),0),255);
-            *(uint8_t *)(response+42) = min(max(128 + (SteamInput()->GetAnalogActionData(controllers[handle_idx], analoghandles["RightJoystick"]).x * 128.0),0),255);
-            *(uint8_t *)(response+43) = min(max(128 + (SteamInput()->GetAnalogActionData(controllers[handle_idx], analoghandles["RightJoystick"]).y * 128.0),0),255);
+            *(uint8_t *)(response+40) = min(max(128 + (getAnalogState(controllers[handle_idx], analoghandles["LeftJoystick"]).x * 128.0),0),255);
+            *(uint8_t *)(response+41) = min(max(128 + (getAnalogState(controllers[handle_idx], analoghandles["LeftJoystick"]).y * 128.0),0),255);
+            *(uint8_t *)(response+42) = min(max(128 + (getAnalogState(controllers[handle_idx], analoghandles["RightJoystick"]).x * 128.0),0),255);
+            *(uint8_t *)(response+43) = min(max(128 + (getAnalogState(controllers[handle_idx], analoghandles["RightJoystick"]).y * 128.0),0),255);
             
-            *(uint8_t *)(response+44) = SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["DpadLeft"]).bState * 255;
-            *(uint8_t *)(response+45) = SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["DpadDown"]).bState * 255;
-            *(uint8_t *)(response+46) = SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["DpadRight"]).bState * 255;
-            *(uint8_t *)(response+47) = SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["DpadUp"]).bState * 255;
-            *(uint8_t *)(response+48) = SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["X"]).bState * 255;
-            *(uint8_t *)(response+49) = SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["A"]).bState * 255;
-            *(uint8_t *)(response+50) = SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["B"]).bState * 255;
-            *(uint8_t *)(response+51) = SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["Y"]).bState * 255;
-            *(uint8_t *)(response+52) = SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["R1"]).bState * 255;
-            *(uint8_t *)(response+53) = SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["L1"]).bState * 255;
+            *(uint8_t *)(response+44) = getDigitalState(controllers[handle_idx], digitalhandles["DpadLeft"]) * 255;
+            *(uint8_t *)(response+45) = getDigitalState(controllers[handle_idx], digitalhandles["DpadDown"]) * 255;
+            *(uint8_t *)(response+46) = getDigitalState(controllers[handle_idx], digitalhandles["DpadRight"]) * 255;
+            *(uint8_t *)(response+47) = getDigitalState(controllers[handle_idx], digitalhandles["DpadUp"]) * 255;
+            *(uint8_t *)(response+48) = getDigitalState(controllers[handle_idx], digitalhandles["X"]) * 255;
+            *(uint8_t *)(response+49) = getDigitalState(controllers[handle_idx], digitalhandles["A"]) * 255;
+            *(uint8_t *)(response+50) = getDigitalState(controllers[handle_idx], digitalhandles["B"]) * 255;
+            *(uint8_t *)(response+51) = getDigitalState(controllers[handle_idx], digitalhandles["Y"]) * 255;
+            *(uint8_t *)(response+52) = getDigitalState(controllers[handle_idx], digitalhandles["R1"]) * 255;
+            *(uint8_t *)(response+53) = getDigitalState(controllers[handle_idx], digitalhandles["L1"]) * 255;
 
-            *(uint8_t *)(response+54) = min(max((SteamInput()->GetAnalogActionData(controllers[handle_idx], analoghandles["RightTrigger"]).x * 255.0),0),255);
-            *(uint8_t *)(response+55) = min(max((SteamInput()->GetAnalogActionData(controllers[handle_idx], analoghandles["LeftTrigger"]).x * 255.0),0),255);
+            *(uint8_t *)(response+54) = min(max((getAnalogState(controllers[handle_idx], analoghandles["RightTrigger"]).x * 255.0),0),255);
+            *(uint8_t *)(response+55) = min(max((getAnalogState(controllers[handle_idx], analoghandles["LeftTrigger"]).x * 255.0),0),255);
 
-            bool touchpad_active = SteamInput()->GetDigitalActionData(controllers[handle_idx], digitalhandles["TPActive"]).bState;
-            float touchpad_x = SteamInput()->GetAnalogActionData(controllers[handle_idx], analoghandles["TPPosition"]).x;
-            float touchpad_y = SteamInput()->GetAnalogActionData(controllers[handle_idx], analoghandles["TPPosition"]).y;
+            bool touchpad_active = getDigitalState(controllers[handle_idx], digitalhandles["TPActive"]);
+            float touchpad_x = getAnalogState(controllers[handle_idx], analoghandles["TPPosition"]).x;
+            float touchpad_y = getAnalogState(controllers[handle_idx], analoghandles["TPPosition"]).y;
 
 
             if (touchpad_active){
@@ -540,13 +597,6 @@ int wmain(int argc, wchar_t* argv[]){
                     i--;
                 }
             }
-
-
-            /*
-            InputMotionData_t wynik;
-            wynik = SteamInput()->GetMotionData(controllers[handle_idx]);
-            std::cout << wynik.posAccelX << " " << wynik.posAccelY << " " << wynik.posAccelZ << " " << wynik.rotVelX << " " << wynik.rotVelY << " " << wynik.rotVelZ << "\n" ;
-            */
 
         }
         
