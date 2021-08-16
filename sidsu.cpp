@@ -4,14 +4,30 @@
 #include <fstream>
 #include <chrono>
 #include <thread>
+#include <vector>
+#include <map>
+#include <filesystem>
+//#include <locale>
+//#include <codecvt>
+
+#if _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
-#include <vector>
-#include <locale>
-#include <codecvt>
-#include <map>
-#include <filesystem>
+
+typedef int socklen_t;
+#elif __linux__
+#include <sys/socket.h>
+#include <netinet/ip.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <netdb.h>
+#include <fcntl.h>
+
+typedef int SOCKET;
+const SOCKET INVALID_SOCKET = -1;
+const ssize_t SOCKET_ERROR = -1;
+#endif
 
 uint32_t crc32(const std::byte message[], unsigned long long msglen){
     uint32_t crc = 0xFFFFFFFF;
@@ -34,6 +50,7 @@ struct subscription{
     uint8_t slot;
 };
 
+#if _WIN32
 std::string w32ToUtf(wchar_t* utf16cstr){
     size_t cstrlen = WideCharToMultiByte(CP_UTF8, 0, utf16cstr, -1, NULL, 0, NULL, NULL);
     char* translated = (char*)malloc(sizeof(char)*cstrlen);
@@ -51,15 +68,28 @@ std::wstring utfToW32(std::string input){
     free(translated);
     return returned;
 }
+#endif
 
 std::string getCurrentExec(){
-    wchar_t selfExePath[MAX_PATH];
-    GetModuleFileNameW(NULL, selfExePath, MAX_PATH-1);
-    return w32ToUtf(selfExePath);
+    #if _WIN32
+        wchar_t selfExePath[MAX_PATH];
+        GetModuleFileNameW(NULL, selfExePath, MAX_PATH-1);
+        return w32ToUtf(selfExePath);
+    #elif __linux__
+        char result[8000];
+        ssize_t written = readlink("/proc/self/exe", result, 7999);
+        if (written != -1 && written != 7999){
+            result[written] = '\0';
+            return std::string(result);
+        }
+        else {
+            return std::string();
+        }
+    #endif
 }
 
-boolean steamProfileActive = true;
-boolean getDigitalState(InputHandle_t controller, InputDigitalActionHandle_t action){
+bool steamProfileActive = true;
+bool getDigitalState(InputHandle_t controller, InputDigitalActionHandle_t action){
     if (steamProfileActive){
         return SteamInput()->GetDigitalActionData(controller, action).bState;
     }
@@ -86,11 +116,15 @@ struct analogData getAnalogState(InputHandle_t controller, InputAnalogActionHand
     }
     return result;
 }
-
+#if _WIN32
 STARTUPINFOW taskinfo;
 PROCESS_INFORMATION newprocinfo;
+#elif __linux__
+pid_t childPid;
+#endif
 
 int spawnProgram(std::string executable, std::vector<std::string> params, std::string workingdir){
+    #if _WIN32
     std::string commandline = "\"" + executable + "\"";
     for (int i = 0; i < params.size(); i++){
         commandline += (" \"" + params[i] + "\"");
@@ -108,21 +142,67 @@ int spawnProgram(std::string executable, std::vector<std::string> params, std::s
     ZeroMemory(&newprocinfo, sizeof(newprocinfo));
 
     return CreateProcessW(NULL, winCommandLine, NULL, NULL, FALSE, 0, NULL, winWorkingDir, &taskinfo, &newprocinfo);
+    #elif __linux__
+        pid_t forkres = fork();
+        if (forkres == 0){
+            std::filesystem::current_path(workingdir);
+
+            char** myargsarray = (char**)malloc(sizeof(char*)*(params.size()+2));
+
+            myargsarray[0] = (char*)malloc(sizeof(char)*(executable.size()+1));
+            memcpy(myargsarray[0], executable.c_str(), executable.size()+1);
+            for (int i = 0 ; i < params.size(); i++){
+                ssize_t arglen = params[i].size() + 1;
+                myargsarray[i+1] = (char*)malloc(sizeof(char)*arglen);
+                memcpy(myargsarray[i+1], params[i].c_str(), arglen);
+            }
+            myargsarray[params.size()+1] = NULL;
+            execv(executable.c_str(), myargsarray);
+        }
+        childPid = forkres;
+        return (forkres <= 0);
+    #endif
 }
 
-boolean checkSpawnedAlive(){
-    DWORD procstat = STILL_ACTIVE;
-    GetExitCodeProcess(newprocinfo.hProcess, &procstat);
-    return (procstat == STILL_ACTIVE);
+bool checkSpawnedAlive(){
+    #if _WIN32
+        DWORD procstat = STILL_ACTIVE;
+        GetExitCodeProcess(newprocinfo.hProcess, &procstat);
+        return (procstat == STILL_ACTIVE);
+    #elif __linux__
+        int procstat;
+        pid_t returned = waitpid(childPid, &procstat, WNOHANG);
+        return !(returned > 0);
+    #endif
+}
+
+bool compareNetworkAddr(sockaddr_in &first, sockaddr_in &second){
+    #if _WIN32
+        bool result = true;
+        result &= (first.sin_port == second.sin_port);
+        result &= (first.sin_addr.S_un.S_addr == second.sin_addr.S_un.S_addr);
+    #elif __linux__
+        bool result = true;
+        result &= (first.sin_port == second.sin_port);
+        result &= (first.sin_addr.s_addr == second.sin_addr.s_addr);
+    #endif
+    return result;
 }
 
 
-
+#if _WIN32
 int wmain(int argc, wchar_t* clArguments[]){
     std::vector<std::string> argv;
     for (int i = 0; i < argc; i++){
         argv.push_back(w32ToUtf(clArguments[i]));
     }
+#elif __linux__
+int main(int argc, char* clArguments[]){
+    std::vector<std::string> argv;
+    for (int i = 0; i < argc; i++){
+        argv.push_back(std::string(clArguments[i]));
+    }
+#endif
 
     std::filesystem::path paramspath = (std::filesystem::temp_directory_path() /= std::string("dsuparams.txt"));
     std::cerr << "Path to parameter file " << paramspath << std::endl;
@@ -174,13 +254,13 @@ int wmain(int argc, wchar_t* clArguments[]){
     std::filesystem::remove(paramspath);
     std::cerr << "loaded " << fileargs.size() << " parameters from file\n";
 
-    boolean dsuMode = false;
-    boolean dsuSteamBind = true;
-    boolean dsuCustomEmu = false;
+    bool dsuMode = false;
+    bool dsuSteamBind = true;
+    bool dsuCustomEmu = false;
     std::vector<std::string> emuParams;
     std::string emuCustomExe = "";
 
-    boolean clientargs = false;
+    bool clientargs = false;
     for (int i = 0; i < fileargs.size(); i++){
         dsuMode = true;
         if (!clientargs){
@@ -228,12 +308,14 @@ int wmain(int argc, wchar_t* clArguments[]){
         return 1;
     }
     
-
+    #if _WIN32
     WSADATA wsaData;
     WSAStartup(MAKEWORD(2,2), &wsaData);
+    #endif
 
-    struct addrinfo *servresult = NULL, servhints;
-    ZeroMemory( &servhints, sizeof(servhints));
+    struct addrinfo servhints;
+    struct addrinfo *servresult = NULL;
+    memset(&servhints, 0, sizeof(servhints));
     servhints.ai_family = AF_INET;
     servhints.ai_socktype = SOCK_DGRAM;
     servhints.ai_protocol = IPPROTO_UDP;
@@ -245,6 +327,13 @@ int wmain(int argc, wchar_t* clArguments[]){
         std::cerr << "CANOT CREATE SOCKET" << std::endl;
         return 1;
     }
+    #if _WIN32
+        unsigned long nonblock = 1;
+        ioctlsocket(DSUSocket, FIONBIO, &nonblock);
+    #elif __linux__
+        int curopts = fcntl(DSUSocket, F_GETFL);
+        fcntl(DSUSocket, F_SETFL, curopts | O_NONBLOCK);
+    #endif
     if (bind( DSUSocket, servresult->ai_addr, (int)servresult->ai_addrlen) == SOCKET_ERROR){
         std::cerr << "CANOT BIND SOCKET" << std::endl;
         return 1;
@@ -308,7 +397,7 @@ int wmain(int argc, wchar_t* clArguments[]){
         touchpad_y_adj[handle_idx] = 0;
     }
 
-    boolean clientRunning = true;
+    bool clientRunning = true;
     while(clientRunning){
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
         if (dsuSteamBind){
@@ -324,28 +413,16 @@ int wmain(int argc, wchar_t* clArguments[]){
             clientRunning = checkSpawnedAlive();
         }
 
-
-        unsigned long bytesinbuffer;
-        if (ioctlsocket(DSUSocket, FIONREAD, &bytesinbuffer) == SOCKET_ERROR){
-            std::cerr << "CANNOT GET BUFFER SIZE" << std::endl;
-            bytesinbuffer = 0;
-        }
-        while (bytesinbuffer > 0){
-            sockaddr_in UDPClientAddr;
-            int udpcaddrsize = sizeof(UDPClientAddr);
-            ZeroMemory(&UDPClientAddr, sizeof(UDPClientAddr));
-
-            int packetbytes = recvfrom(DSUSocket, (char *)UDPrecv, 2000, 0, (SOCKADDR *)&UDPClientAddr, &udpcaddrsize);
-            int sockError = WSAGetLastError();
-
-            if (ioctlsocket(DSUSocket, FIONREAD, &bytesinbuffer) == SOCKET_ERROR){
-                std::cerr << "CANNOT GET BUFFER SIZE" << std::endl;
-                break;
-            }
+        sockaddr_in UDPClientAddr;
+        socklen_t udpcaddrsize = sizeof(UDPClientAddr);
+        memset(&UDPClientAddr, 0, sizeof(UDPClientAddr));
+        while (true){
+            ssize_t packetbytes = recvfrom(DSUSocket, (char*)UDPrecv, 2000, 0, (sockaddr*)&UDPClientAddr, &udpcaddrsize);
 
             if (packetbytes == SOCKET_ERROR){
+                //int sockError = WSAGetLastError();
                 //std::cerr << "SOCKET ERROR " << sockError << std::endl;
-                continue;
+                break;
             }
 
             if (packetbytes < 20){
@@ -386,7 +463,7 @@ int wmain(int argc, wchar_t* clArguments[]){
 
             if (DSUmessType == 0x100000){
                 std::byte response[22];
-                char* magic = "DSUS";
+                const char* magic = "DSUS";
                 memcpy(response, magic, 4);
 
                 *(uint16_t *)(response+4) = 1001;
@@ -398,7 +475,7 @@ int wmain(int argc, wchar_t* clArguments[]){
                 memset(response+8, 0, 4);
                 *(uint32_t *)(response+8) = crc32(response, 22);
 
-                sendto(DSUSocket, (char *)(response), 22, 0, (SOCKADDR *)(&UDPClientAddr), sizeof(UDPClientAddr) );
+                sendto(DSUSocket, (char *)(response), 22, 0, (sockaddr *)(&UDPClientAddr), sizeof(UDPClientAddr) );
             }
 
             if (DSUmessType == 0x100001){
@@ -407,7 +484,7 @@ int wmain(int argc, wchar_t* clArguments[]){
                     uint8_t slotID = *(uint8_t*)(UDPrecv + 24 + i);
 
                     std::byte response[32];
-                    char* magic = "DSUS";
+                    const char* magic = "DSUS";
                     memcpy(response, magic, 4);
 
                     *(uint16_t *)(response+4) = 1001;
@@ -431,7 +508,7 @@ int wmain(int argc, wchar_t* clArguments[]){
                     memset(response+8, 0, 4);
                     *(uint32_t *)(response+8) = crc32(response, 32);
 
-                    sendto(DSUSocket, (char *)(response), 32, 0, (SOCKADDR *)(&UDPClientAddr), sizeof(UDPClientAddr) );
+                    sendto(DSUSocket, (char *)(response), 32, 0, (sockaddr *)(&UDPClientAddr), sizeof(UDPClientAddr) );
 
                 }
             }
@@ -453,7 +530,7 @@ int wmain(int argc, wchar_t* clArguments[]){
                     bool alreadyexists = false;
 
                     for (int i = 0; i < subs.size(); i++){
-                        if (subs[i].clientaddr.sin_port == UDPClientAddr.sin_port && subs[i].clientaddr.sin_addr.S_un.S_addr == UDPClientAddr.sin_addr.S_un.S_addr && subs[i].slot == slottoreport){
+                        if (compareNetworkAddr(subs[i].clientaddr, UDPClientAddr) && subs[i].slot == slottoreport){
                             alreadyexists = true;
                             subs[i].lastrequest = std::chrono::steady_clock::now();
                             break;
@@ -473,13 +550,16 @@ int wmain(int argc, wchar_t* clArguments[]){
                 }
             }
 
+            udpcaddrsize = sizeof(UDPClientAddr);
+            memset(&UDPClientAddr, 0, sizeof(UDPClientAddr));
+
         }
 
         for (int handle_idx = 0; handle_idx < controllers_num; handle_idx++){
 
             std::byte response[100];
 
-            char* magic = "DSUS";
+            const char* magic = "DSUS";
             memcpy(response, magic, 4);
 
             *(uint16_t *)(response+4) = 1001;
@@ -523,10 +603,10 @@ int wmain(int argc, wchar_t* clArguments[]){
             *(uint8_t *)(response+39) = getDigitalState(controllers[handle_idx], digitalhandles["Touch"]) ? 0xFF : 0x00;
 
             
-            *(uint8_t *)(response+40) = min(max(128 + (getAnalogState(controllers[handle_idx], analoghandles["LeftJoystick"]).x * 128.0),0),255);
-            *(uint8_t *)(response+41) = min(max(128 + (getAnalogState(controllers[handle_idx], analoghandles["LeftJoystick"]).y * 128.0),0),255);
-            *(uint8_t *)(response+42) = min(max(128 + (getAnalogState(controllers[handle_idx], analoghandles["RightJoystick"]).x * 128.0),0),255);
-            *(uint8_t *)(response+43) = min(max(128 + (getAnalogState(controllers[handle_idx], analoghandles["RightJoystick"]).y * 128.0),0),255);
+            *(uint8_t *)(response+40) = std::min(std::max<int>(128 + (getAnalogState(controllers[handle_idx], analoghandles["LeftJoystick"]).x * 128.0),0),255);
+            *(uint8_t *)(response+41) = std::min(std::max<int>(128 + (getAnalogState(controllers[handle_idx], analoghandles["LeftJoystick"]).y * 128.0),0),255);
+            *(uint8_t *)(response+42) = std::min(std::max<int>(128 + (getAnalogState(controllers[handle_idx], analoghandles["RightJoystick"]).x * 128.0),0),255);
+            *(uint8_t *)(response+43) = std::min(std::max<int>(128 + (getAnalogState(controllers[handle_idx], analoghandles["RightJoystick"]).y * 128.0),0),255);
             
             *(uint8_t *)(response+44) = getDigitalState(controllers[handle_idx], digitalhandles["DpadLeft"]) * 255;
             *(uint8_t *)(response+45) = getDigitalState(controllers[handle_idx], digitalhandles["DpadDown"]) * 255;
@@ -539,8 +619,8 @@ int wmain(int argc, wchar_t* clArguments[]){
             *(uint8_t *)(response+52) = getDigitalState(controllers[handle_idx], digitalhandles["R1"]) * 255;
             *(uint8_t *)(response+53) = getDigitalState(controllers[handle_idx], digitalhandles["L1"]) * 255;
 
-            *(uint8_t *)(response+54) = min(max((getAnalogState(controllers[handle_idx], analoghandles["RightTrigger"]).x * 255.0),0),255);
-            *(uint8_t *)(response+55) = min(max((getAnalogState(controllers[handle_idx], analoghandles["LeftTrigger"]).x * 255.0),0),255);
+            *(uint8_t *)(response+54) = std::min(std::max<int>((getAnalogState(controllers[handle_idx], analoghandles["RightTrigger"]).x * 255.0),0),255);
+            *(uint8_t *)(response+55) = std::min(std::max<int>((getAnalogState(controllers[handle_idx], analoghandles["LeftTrigger"]).x * 255.0),0),255);
 
             bool touchpad_active = getDigitalState(controllers[handle_idx], digitalhandles["TPActive"]);
             float touchpad_x = getAnalogState(controllers[handle_idx], analoghandles["TPPosition"]).x;
@@ -551,8 +631,8 @@ int wmain(int argc, wchar_t* clArguments[]){
                 if (last_touchpad_state[handle_idx] == false){
                     touchpad_id[handle_idx]++;
                 }
-                touchpad_x_adj[handle_idx] = min(max((960 + (touchpad_x * 960)),0),1919);
-                touchpad_y_adj[handle_idx] = min(max((471 + (touchpad_y * 471)),0),942);
+                touchpad_x_adj[handle_idx] = std::min(std::max<int>((960 + (touchpad_x * 960)),0),1919);
+                touchpad_y_adj[handle_idx] = std::min(std::max<int>((471 + (touchpad_y * 471)),0),942);
             }
             *(uint8_t *)(response+56) = (touchpad_active ? 1 : 0);
             *(uint8_t *)(response+57) = touchpad_id[handle_idx];
@@ -589,7 +669,7 @@ int wmain(int argc, wchar_t* clArguments[]){
             for (int i = 0; i < subs.size(); i++){
                 if (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - subs[i].lastrequest).count() < 5){
                     if (subs[i].slot == 5 || subs[i].slot == handle_idx){
-                        sendto(DSUSocket, (char *)(response), 100, 0, (SOCKADDR *)(&subs[i].clientaddr), sizeof(subs[i].clientaddr));
+                        sendto(DSUSocket, (char *)(response), 100, 0, (sockaddr *)(&subs[i].clientaddr), sizeof(subs[i].clientaddr));
                     }
                 }
                 else{
@@ -601,9 +681,12 @@ int wmain(int argc, wchar_t* clArguments[]){
         }
         
     }
-
+    #if _WIN32
     closesocket(DSUSocket);
     WSACleanup();
+    #elif __linux__
+    close(DSUSocket);
+    #endif
 
     SteamInput()->Shutdown();
     SteamAPI_Shutdown();
