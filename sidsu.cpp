@@ -283,6 +283,21 @@ int main(int argc, char* clArguments[]){
         emuParams.push_back(fileargs[i]);
     }
 
+    if (!dsuMode){
+        std::filesystem::path myExePath = std::filesystem::path(getCurrentExec());
+        std::filesystem::path targetExeName = myExePath.filename();
+        std::filesystem::path targetDirectory = (myExePath.remove_filename() / "dsu");
+        std::string gameExe = (targetDirectory / targetExeName).u8string();
+        std::vector<std::string> gameArgs;
+
+        for (int i = 1; i < argc; i++){
+            gameArgs.push_back(argv[i]);
+        }
+
+        spawnProgram(gameExe, gameArgs, targetDirectory.u8string());
+        return 1;
+    }
+
     if (dsuSteamBind){
         if ( SteamAPI_RestartAppIfNecessary(fakeappid) ){
             return 1;
@@ -291,20 +306,6 @@ int main(int argc, char* clArguments[]){
     }
 
     std::filesystem::remove(paramspath);
-
-    if (!dsuMode){
-        std::filesystem::path myExeName = std::filesystem::path(getCurrentExec()).filename();
-        std::filesystem::path myDirectory = std::filesystem::current_path();
-        std::string gameExe = (myDirectory / "dsu" / myExeName).u8string();
-        std::vector<std::string> gameArgs;
-
-        for (int i = 1; i < argc; i++){
-            gameArgs.push_back(argv[i]);
-        }
-
-        spawnProgram(gameExe, gameArgs, myDirectory.u8string());
-        return 1;
-    }
     
     #if _WIN32
         WSADATA wsaData;
