@@ -257,6 +257,16 @@ int main(int argc, char* clArguments[]){
     std::vector<std::string> emuParams;
     std::string emuCustomExe = "";
 
+    if (fakeappid == 0){
+        dsuMode = true;
+        dsuSteamBind = false;
+        if (fileargs.size() == 0){
+            for (int i = 1; i < argc; i++){
+                fileargs.push_back(argv[i]);
+            }
+        }
+    }
+
     bool clientargs = false;
     for (int i = 0; i < fileargs.size(); i++){
         dsuMode = true;
