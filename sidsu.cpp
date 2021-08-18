@@ -366,8 +366,20 @@ int main(int argc, char* clArguments[]){
     
     std::cerr << "Starting SteamInput\n";
 
+    std::filesystem::remove("steam_appid.txt");
+    if (!dsuSteamBind){
+        std::ofstream appidhint("steam_appid.txt");
+        int fakeid = fakeappid;
+        if (fakeid == 0){
+            //Everyone owns Spacewar
+            fakeid = 480;
+        }
+        appidhint << fakeid;
+        appidhint.close();
+    }
     SteamAPI_Init();
     SteamInput()->Init();
+    std::filesystem::remove("steam_appid.txt");
 
     std::vector<subscription> subs;
 
@@ -408,6 +420,7 @@ int main(int argc, char* clArguments[]){
         uint64_t datacapture = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
         reports++;
         controllers_num = SteamInput()->GetConnectedControllers(controllers);
+        //std::cerr << controllers_num;
 
         if ( (std::chrono::steady_clock::now() - lastcemucheck) > std::chrono::milliseconds(500) ){
             lastcemucheck = std::chrono::steady_clock::now();
