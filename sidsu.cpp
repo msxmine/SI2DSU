@@ -238,37 +238,40 @@ int main(int argc, char* clArguments[]){
     if (fakeappid == 0){
         dsuMode = true;
         dsuSteamBind = false;
-        if (fileargs.size() == 0){
-            for (int i = 1; i < argc; i++){
-                fileargs.push_back(argv[i]);
-            }
+    }
+
+    if (fileargs.size() == 0){
+        for (int i = 1; i < argc; i++){
+            fileargs.push_back(argv[i]);
         }
     }
 
-    bool clientargs = false;
-    for (int i = 0; i < fileargs.size(); i++){
+    if (fileargs.size() >= 1 && (dsuMode || fileargs[0] == "-dsumode")){
         dsuMode = true;
-        if (!clientargs){
-            if (fileargs[i] == "-dsumode"){
-                continue;
-            }
-            else if (fileargs[i] == "-dsumotiononly"){
-                dsuSteamBind = false;
-                continue;
-            }
-            else if (fileargs[i] == "-dsuclientexe"){
-                if (i+1 < fileargs.size()){
-                    dsuCustomEmu = true;
-                    emuCustomExe = fileargs[i+1];
-                    i++;
+        bool clientargs = false;
+        for (int i = 0; i < fileargs.size(); i++){
+            if (!clientargs){
+                if (fileargs[i] == "-dsumode"){
                     continue;
                 }
+                else if (fileargs[i] == "-dsumotiononly"){
+                    dsuSteamBind = false;
+                    continue;
+                }
+                else if (fileargs[i] == "-dsuclientexe"){
+                    if (i+1 < fileargs.size()){
+                        dsuCustomEmu = true;
+                        emuCustomExe = fileargs[i+1];
+                        i++;
+                        continue;
+                    }
+                }
+                else{
+                    clientargs = true;
+                }
             }
-            else{
-                clientargs = true;
-            }
+            emuParams.push_back(fileargs[i]);
         }
-        emuParams.push_back(fileargs[i]);
     }
 
     if (argc > 1){
