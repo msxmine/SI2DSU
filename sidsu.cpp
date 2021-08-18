@@ -206,28 +206,6 @@ int main(int argc, char* clArguments[]){
     std::filesystem::path paramspath = (std::filesystem::temp_directory_path() /= std::string("dsuparams.txt"));
     std::cerr << "Path to parameter file " << paramspath << std::endl;
 
-    if (argc > 1){
-        if ( argv[1] == "-dsumode" ){
-            std::cerr << "Launched with " << argc-1 << " arguments" << std::endl;
-
-            std::filesystem::remove(paramspath);
-            std::ofstream paramstore(paramspath);
-
-            for (int i = 1; i < argc; i++){
-                paramstore << argv[i] << '\n';
-            }
-            paramstore.close();
-
-            std::string myExePath = getCurrentExec();
-            std::vector<std::string> emptyArgs;
-            std::string myDirectory = (std::filesystem::current_path()).u8string();
-
-            spawnProgram(myExePath, emptyArgs, myDirectory);
-            return 1;
-
-        }
-    }
-
     std::ifstream settingsfile("dsusettings.txt");
     std::string cemuexec = "";
     std::string idtext = "";
@@ -291,6 +269,28 @@ int main(int argc, char* clArguments[]){
             }
         }
         emuParams.push_back(fileargs[i]);
+    }
+
+    if (argc > 1){
+        if ( argv[1] == "-dsumode" && dsuSteamBind){
+            std::cerr << "Launched with " << argc-1 << " arguments" << std::endl;
+
+            std::filesystem::remove(paramspath);
+            std::ofstream paramstore(paramspath);
+
+            for (int i = 1; i < argc; i++){
+                paramstore << argv[i] << '\n';
+            }
+            paramstore.close();
+
+            std::string myExePath = getCurrentExec();
+            std::vector<std::string> emptyArgs;
+            std::string myDirectory = (std::filesystem::current_path()).u8string();
+
+            spawnProgram(myExePath, emptyArgs, myDirectory);
+            return 1;
+
+        }
     }
 
     if (!dsuMode){
