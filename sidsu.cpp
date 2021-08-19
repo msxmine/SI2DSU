@@ -230,32 +230,16 @@ int main(int argc, char* clArguments[]){
     std::cerr << "loaded " << fileargs.size() << " parameters from file\n";
 
     bool dsuMode = false;
-    bool dsuSteamBind = true;
     bool dsuCustomEmu = false;
     std::vector<std::string> emuParams;
     std::string emuCustomExe = "";
 
-    if (fakeappid == 0){
-        dsuMode = true;
-        dsuSteamBind = false;
-    }
-
-    if (fileargs.size() == 0){
-        for (int i = 1; i < argc; i++){
-            fileargs.push_back(argv[i]);
-        }
-    }
-
-    if (fileargs.size() >= 1 && (dsuMode || fileargs[0] == "-dsumode")){
+    if (fileargs.size() >= 1 &&  fileargs[0] == "-dsumode"){
         dsuMode = true;
         bool clientargs = false;
         for (int i = 0; i < fileargs.size(); i++){
             if (!clientargs){
                 if (fileargs[i] == "-dsumode"){
-                    continue;
-                }
-                else if (fileargs[i] == "-dsumotiononly"){
-                    dsuSteamBind = false;
                     continue;
                 }
                 else if (fileargs[i] == "-dsuclientexe"){
@@ -275,7 +259,7 @@ int main(int argc, char* clArguments[]){
     }
 
     if (argc > 1){
-        if ( argv[1] == "-dsumode" && dsuSteamBind){
+        if ( argv[1] == "-dsumode"){
             std::cerr << "Launched with " << argc-1 << " arguments" << std::endl;
 
             std::filesystem::remove(paramspath);
@@ -292,7 +276,6 @@ int main(int argc, char* clArguments[]){
 
             spawnProgram(myExePath, emptyArgs, myDirectory);
             return 1;
-
         }
     }
 
@@ -311,12 +294,12 @@ int main(int argc, char* clArguments[]){
         return 1;
     }
 
-    if (dsuSteamBind){
-        if ( SteamAPI_RestartAppIfNecessary(fakeappid) ){
-            return 1;
-        }
-        std::cerr << "Steam API restart not necessary\n";
+
+    if ( SteamAPI_RestartAppIfNecessary(fakeappid) ){
+        return 1;
     }
+    std::cerr << "Steam API restart not necessary\n";
+
 
     std::filesystem::remove(paramspath);
     
@@ -367,19 +350,8 @@ int main(int argc, char* clArguments[]){
     std::cerr << "Starting SteamInput\n";
 
     std::filesystem::remove("steam_appid.txt");
-    if (!dsuSteamBind){
-        std::ofstream appidhint("steam_appid.txt");
-        int fakeid = fakeappid;
-        if (fakeid == 0){
-            //Everyone owns Spacewar
-            fakeid = 480;
-        }
-        appidhint << fakeid;
-        appidhint.close();
-    }
     SteamAPI_Init();
     SteamInput()->Init();
-    std::filesystem::remove("steam_appid.txt");
 
     std::vector<subscription> subs;
 
@@ -427,7 +399,7 @@ int main(int argc, char* clArguments[]){
             clientRunning = checkSpawnedAlive();
         }
 
-        if (!steamProfileActive && dsuSteamBind && controllers_num > 0 && (std::chrono::steady_clock::now() - lastbindingcheck) > std::chrono::milliseconds(1000) ){
+        if (!steamProfileActive && controllers_num > 0 && (std::chrono::steady_clock::now() - lastbindingcheck) > std::chrono::milliseconds(1000) ){
             lastbindingcheck = std::chrono::steady_clock::now();
             int majorRevision = -1;
             int minorRevision = -1;
