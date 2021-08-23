@@ -7,6 +7,7 @@
 #include <vector>
 #include <map>
 #include <filesystem>
+#include <cstring>
 
 #if _WIN32
     #include <winsock2.h>
@@ -171,7 +172,7 @@ bool checkSpawnedAlive(){
     #elif __linux__
         int procstat;
         pid_t returned = waitpid(childPid, &procstat, WNOHANG);
-        return !(returned > 0);
+        return (returned == 0);
     #endif
 }
 
